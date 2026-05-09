@@ -13,6 +13,14 @@ type UpdateDeviceProfileRequest struct {
 	Color       string `json:"color"`
 }
 
+type UpsertDeviceRequest struct {
+	ID          string   `json:"id"`
+	DisplayName string   `json:"display_name"`
+	Color       string   `json:"color"`
+	Token       string   `json:"token,omitempty"`
+	GroupIDs    []string `json:"group_ids,omitempty"`
+}
+
 type Group struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`

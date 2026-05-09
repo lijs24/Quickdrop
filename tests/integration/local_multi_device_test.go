@@ -80,6 +80,7 @@ func TestLocalMultiDeviceTransfersAndOfflineReplay(t *testing.T) {
 	procs = append(procs, startProcess(t, ctx, exe, tmp, "agent", paths["server"]))
 	waitForOnline(t, ctx, hubBaseURL, "laptop", []string{"laptop", "workstation", "main-server"})
 	waitForMonitorOnline(t, ctx, hubBaseURL, "laptop", []string{"laptop", "workstation", "main-server"})
+	verifyPeerDeviceManagement(t, ctx, hubBaseURL, paths["hub"])
 
 	// Bidirectional text delivery between laptop and workstation.
 	runQuickDrop(t, ctx, exe, tmp, "text", "-c", paths["laptop"], "device:workstation", "laptop to workstation")
@@ -398,6 +399,163 @@ func getDevices(ctx context.Context, baseURL, authDevice string) (map[string]boo
 		devices[dev.ID] = dev.Online
 	}
 	return devices, nil
+}
+
+func verifyPeerDeviceManagement(t *testing.T, ctx context.Context, baseURL, hubConfigPath string) {
+	t.Helper()
+	req := map[string]any{
+		"id":           "tablet",
+		"display_name": "Tablet",
+		"color":        "#dc2626",
+		"token":        "dev-tablet-token",
+		"group_ids":    []string{"all"},
+	}
+	upsertManagedDevice(t, ctx, baseURL, "laptop", req)
+	waitFor(t, ctx, func() (bool, string) {
+		devices, err := getDevices(ctx, baseURL, "workstation")
+		if err != nil {
+			return false, err.Error()
+		}
+		if _, ok := devices["tablet"]; !ok {
+			return false, "tablet missing from device list"
+		}
+		return true, ""
+	})
+	if _, err := getDevices(ctx, baseURL, "tablet"); err != nil {
+		t.Fatalf("newly managed tablet device cannot authenticate: %v", err)
+	}
+	waitForGroupMember(t, ctx, baseURL, "laptop", "all", "tablet", true)
+	assertFileContains(t, hubConfigPath, `"id": "tablet"`)
+
+	deleteManagedDevice(t, ctx, baseURL, "workstation", "tablet")
+	waitFor(t, ctx, func() (bool, string) {
+		devices, err := getDevices(ctx, baseURL, "laptop")
+		if err != nil {
+			return false, err.Error()
+		}
+		if _, ok := devices["tablet"]; ok {
+			return false, "tablet still in device list"
+		}
+		return true, ""
+	})
+	waitForGroupMember(t, ctx, baseURL, "laptop", "all", "tablet", false)
+	assertFileNotContains(t, hubConfigPath, `"id": "tablet"`)
+}
+
+func upsertManagedDevice(t *testing.T, ctx context.Context, baseURL, authDevice string, body map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/devices", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setAuthHeaders(req, authDevice)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upsert managed device returned %s: %s", resp.Status, data)
+	}
+}
+
+func deleteManagedDevice(t *testing.T, ctx context.Context, baseURL, authDevice, deviceID string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, baseURL+"/api/devices/"+deviceID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setAuthHeaders(req, authDevice)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("delete managed device returned %s: %s", resp.Status, data)
+	}
+}
+
+func waitForGroupMember(t *testing.T, ctx context.Context, baseURL, authDevice, groupID, deviceID string, want bool) {
+	t.Helper()
+	waitFor(t, ctx, func() (bool, string) {
+		groups, err := getGroups(ctx, baseURL, authDevice)
+		if err != nil {
+			return false, err.Error()
+		}
+		members, ok := groups[groupID]
+		if !ok {
+			return false, fmt.Sprintf("group %s missing", groupID)
+		}
+		got := false
+		for _, member := range members {
+			if member == deviceID {
+				got = true
+				break
+			}
+		}
+		return got == want, fmt.Sprintf("group %s membership for %s = %v", groupID, deviceID, got)
+	})
+}
+
+func getGroups(ctx context.Context, baseURL, authDevice string) (map[string][]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/groups", nil)
+	if err != nil {
+		return nil, err
+	}
+	setAuthHeaders(req, authDevice)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("groups returned %s: %s", resp.Status, data)
+	}
+	var payload struct {
+		Groups []struct {
+			ID      string   `json:"id"`
+			Members []string `json:"members"`
+		} `json:"groups"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	groups := map[string][]string{}
+	for _, group := range payload.Groups {
+		groups[group.ID] = group.Members
+	}
+	return groups, nil
+}
+
+func assertFileContains(t *testing.T, path, needle string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), needle) {
+		t.Fatalf("%s does not contain %q", path, needle)
+	}
+}
+
+func assertFileNotContains(t *testing.T, path, needle string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), needle) {
+		t.Fatalf("%s still contains %q", path, needle)
+	}
 }
 
 type monitorDevice struct {

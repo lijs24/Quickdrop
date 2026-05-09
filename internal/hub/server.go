@@ -12,6 +12,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,10 +30,16 @@ type contextKey string
 
 const deviceIDKey contextKey = "device_id"
 
+var (
+	errConfigSave      = errors.New("save hub config")
+	errManagedInternal = errors.New("device management internal error")
+)
+
 type Server struct {
-	cfg    *config.Config
-	db     *sql.DB
-	broker *broker
+	cfg      *config.Config
+	configMu sync.Mutex
+	db       *sql.DB
+	broker   *broker
 }
 
 type pendingAttachment struct {
@@ -101,6 +108,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.Handle("/api/monitor", s.auth(http.HandlerFunc(s.handleMonitor)))
 	mux.Handle("/api/devices/me", s.auth(http.HandlerFunc(s.handleDeviceProfile)))
+	mux.Handle("/api/devices/", s.auth(http.HandlerFunc(s.handleDeviceByID)))
 	mux.Handle("/api/devices", s.auth(http.HandlerFunc(s.handleDevices)))
 	mux.Handle("/api/groups", s.auth(http.HandlerFunc(s.handleGroups)))
 	mux.Handle("/api/messages", s.auth(http.HandlerFunc(s.handleMessages)))
@@ -205,10 +213,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET required")
-		return
+	switch r.Method {
+	case http.MethodGet:
+		s.listDevices(w, r)
+	case http.MethodPost:
+		s.upsertDevice(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "GET or POST required")
 	}
+}
+
+func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `SELECT id, display_name, COALESCE(color, ''), COALESCE(last_seen_at, ''), online FROM devices ORDER BY id`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list devices: "+err.Error())
@@ -226,7 +241,56 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		dev.Online = online != 0
 		devices = append(devices, dev)
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "iterate devices: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, protocol.DevicesResponse{Devices: devices})
+}
+
+func (s *Server) upsertDevice(w http.ResponseWriter, r *http.Request) {
+	var req protocol.UpsertDeviceRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode device: "+err.Error())
+		return
+	}
+	dev, err := s.saveManagedDevice(r.Context(), req)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errConfigSave) || errors.Is(err, errManagedInternal) {
+			status = http.StatusInternalServerError
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dev)
+}
+
+func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/devices/")
+	if decoded, err := url.PathUnescape(id); err == nil {
+		id = decoded
+	}
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, "device endpoint not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.deleteManagedDevice(r.Context(), currentDeviceID(r), id); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errConfigSave) || errors.Is(err, errManagedInternal) {
+				status = http.StatusInternalServerError
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+	}
 }
 
 func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +384,224 @@ FROM devices WHERE id = ?
 	}
 	dev.Online = online != 0
 	writeJSON(w, http.StatusOK, dev)
+}
+
+func (s *Server) saveManagedDevice(ctx context.Context, req protocol.UpsertDeviceRequest) (protocol.Device, error) {
+	deviceID, err := normalizeDeviceID(req.ID)
+	if err != nil {
+		return protocol.Device{}, err
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = deviceID
+	}
+	color := normalizeDeviceColor(req.Color)
+	if req.Color != "" && color == "" {
+		return protocol.Device{}, errors.New("color must be a hex value like #2563eb")
+	}
+	token := strings.TrimSpace(req.Token)
+
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: begin device transaction: %v", errManagedInternal, err)
+	}
+	defer tx.Rollback()
+
+	var tokenHash string
+	exists := true
+	err = tx.QueryRowContext(ctx, `SELECT token_hash FROM devices WHERE id = ?`, deviceID).Scan(&tokenHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		exists = false
+	} else if err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: lookup device %s: %v", errManagedInternal, deviceID, err)
+	}
+	if !exists && token == "" {
+		return protocol.Device{}, errors.New("token is required for a new device")
+	}
+	if token != "" {
+		tokenHash = auth.HashToken(token)
+	}
+	now := qsqlite.Now()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO devices(id, display_name, token_hash, color, created_at, online)
+VALUES(?, ?, ?, ?, ?, 0)
+ON CONFLICT(id) DO UPDATE SET
+  display_name=excluded.display_name,
+  token_hash=excluded.token_hash,
+  color=excluded.color
+`, deviceID, displayName, tokenHash, color, now); err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: upsert device %s: %v", errManagedInternal, deviceID, err)
+	}
+	groupIDs, err := s.validateGroupIDsTx(ctx, tx, req.GroupIDs)
+	if err != nil {
+		return protocol.Device{}, err
+	}
+	if req.GroupIDs != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM group_members WHERE device_id = ?`, deviceID); err != nil {
+			return protocol.Device{}, fmt.Errorf("%w: clear group memberships for %s: %v", errManagedInternal, deviceID, err)
+		}
+		for _, groupID := range groupIDs {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO group_members(group_id, device_id) VALUES(?, ?)`, groupID, deviceID); err != nil {
+				return protocol.Device{}, fmt.Errorf("%w: add %s to group %s: %v", errManagedInternal, deviceID, groupID, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: commit device transaction: %v", errManagedInternal, err)
+	}
+
+	s.upsertConfigDevice(deviceID, displayName, color, token)
+	if req.GroupIDs != nil {
+		s.setConfigDeviceGroups(deviceID, groupIDs)
+	}
+	if err := config.Save(s.cfg.Path, s.cfg); err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: %v", errConfigSave, err)
+	}
+	dev, err := s.loadDevice(ctx, deviceID)
+	if err != nil {
+		return protocol.Device{}, err
+	}
+	return dev, nil
+}
+
+func (s *Server) deleteManagedDevice(ctx context.Context, currentDeviceID, id string) error {
+	deviceID, err := normalizeDeviceID(id)
+	if err != nil {
+		return err
+	}
+	if deviceID == currentDeviceID {
+		return errors.New("cannot delete the current authenticated device")
+	}
+
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%w: begin delete device transaction: %v", errManagedInternal, err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE id = ?`, deviceID)
+	if err != nil {
+		return fmt.Errorf("%w: delete device %s: %v", errManagedInternal, deviceID, err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("device %s does not exist", deviceID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM group_members WHERE device_id = ?`, deviceID); err != nil {
+		return fmt.Errorf("%w: delete group memberships for %s: %v", errManagedInternal, deviceID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM deliveries WHERE target_device_id = ?`, deviceID); err != nil {
+		return fmt.Errorf("%w: delete deliveries for %s: %v", errManagedInternal, deviceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: commit delete device transaction: %v", errManagedInternal, err)
+	}
+
+	s.deleteConfigDevice(deviceID)
+	if err := config.Save(s.cfg.Path, s.cfg); err != nil {
+		return fmt.Errorf("%w: %v", errConfigSave, err)
+	}
+	return nil
+}
+
+func (s *Server) validateGroupIDsTx(ctx context.Context, tx *sql.Tx, groupIDs []string) ([]string, error) {
+	if groupIDs == nil {
+		return nil, nil
+	}
+	unique := make([]string, 0, len(groupIDs))
+	seen := map[string]bool{}
+	for _, raw := range groupIDs {
+		groupID := strings.TrimSpace(raw)
+		if groupID == "" || seen[groupID] {
+			continue
+		}
+		var existing string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM "groups" WHERE id = ?`, groupID).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("group %s does not exist", groupID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w: lookup group %s: %v", errManagedInternal, groupID, err)
+		}
+		seen[groupID] = true
+		unique = append(unique, groupID)
+	}
+	return unique, nil
+}
+
+func (s *Server) loadDevice(ctx context.Context, deviceID string) (protocol.Device, error) {
+	var dev protocol.Device
+	var online int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT id, display_name, COALESCE(color, ''), COALESCE(last_seen_at, ''), online
+FROM devices WHERE id = ?
+`, deviceID).Scan(&dev.ID, &dev.DisplayName, &dev.Color, &dev.LastSeenAt, &online); err != nil {
+		return protocol.Device{}, fmt.Errorf("%w: load device %s: %v", errManagedInternal, deviceID, err)
+	}
+	dev.Online = online != 0
+	return dev, nil
+}
+
+func (s *Server) upsertConfigDevice(deviceID, displayName, color, token string) {
+	for i := range s.cfg.Devices {
+		if s.cfg.Devices[i].ID == deviceID {
+			s.cfg.Devices[i].DisplayName = displayName
+			s.cfg.Devices[i].Color = color
+			if token != "" {
+				s.cfg.Devices[i].Token = token
+			}
+			return
+		}
+	}
+	s.cfg.Devices = append(s.cfg.Devices, config.DeviceConfig{
+		ID:          deviceID,
+		DisplayName: displayName,
+		Token:       token,
+		Color:       color,
+	})
+}
+
+func (s *Server) setConfigDeviceGroups(deviceID string, groupIDs []string) {
+	selected := map[string]bool{}
+	for _, groupID := range groupIDs {
+		selected[groupID] = true
+	}
+	for i := range s.cfg.Groups {
+		members := make([]string, 0, len(s.cfg.Groups[i].Members)+1)
+		for _, member := range s.cfg.Groups[i].Members {
+			if member != deviceID {
+				members = append(members, member)
+			}
+		}
+		if selected[s.cfg.Groups[i].ID] {
+			members = append(members, deviceID)
+		}
+		s.cfg.Groups[i].Members = members
+	}
+}
+
+func (s *Server) deleteConfigDevice(deviceID string) {
+	devices := make([]config.DeviceConfig, 0, len(s.cfg.Devices))
+	for _, dev := range s.cfg.Devices {
+		if dev.ID != deviceID {
+			devices = append(devices, dev)
+		}
+	}
+	s.cfg.Devices = devices
+	for i := range s.cfg.Groups {
+		members := make([]string, 0, len(s.cfg.Groups[i].Members))
+		for _, member := range s.cfg.Groups[i].Members {
+			if member != deviceID {
+				members = append(members, member)
+			}
+		}
+		s.cfg.Groups[i].Members = members
+	}
 }
 
 func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
@@ -907,6 +1189,23 @@ func conversationForViewer(viewer string, msg protocol.Message) string {
 		return "device:" + msg.SenderDeviceID
 	}
 	return "group:" + msg.TargetID
+}
+
+func normalizeDeviceID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("device id is required")
+	}
+	if len(id) > 64 {
+		return "", errors.New("device id is too long")
+	}
+	for _, ch := range id {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
+			continue
+		}
+		return "", errors.New("device id may only contain letters, numbers, hyphen, and underscore")
+	}
+	return id, nil
 }
 
 func normalizeDeviceColor(color string) string {

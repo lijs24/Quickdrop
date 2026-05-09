@@ -17,6 +17,7 @@
           <div class="brandActions">
             <button id="settingsButton" type="button" title="Settings" data-i18n="settings">Settings</button>
             <button id="refreshButton" type="button" title="Refresh" data-i18n="refresh">Refresh</button>
+            <button id="deviceAdminButton" type="button" title="Devices" data-i18n="deviceAdmin">Devices</button>
             <button id="monitorButton" type="button" title="Monitor" data-i18n="monitor">Monitor</button>
             <button id="updateButton" class="appOnly" type="button" title="Update" data-i18n="update" hidden>Update</button>
             <button id="closeAppButton" class="appOnly dangerButton" type="button" title="Close app" data-i18n="closeApp" hidden>Close app</button>
@@ -147,6 +148,54 @@
           <button id="saveSettingsButton" type="submit" data-i18n="save">Save</button>
         </footer>
       </form>
+    </dialog>
+    <dialog id="deviceAdminDialog" class="deviceAdminDialog">
+      <section class="deviceAdminPanel">
+        <header class="settingsHeader">
+          <div>
+            <h2 data-i18n="deviceAdmin">Devices</h2>
+            <p id="deviceAdminStatus"></p>
+          </div>
+          <button id="closeDeviceAdminButton" type="button" data-i18n="close">Close</button>
+        </header>
+        <div class="deviceAdminBody">
+          <aside>
+            <div class="deviceAdminToolbar">
+              <button id="newDeviceButton" type="button" data-i18n="newDevice">New device</button>
+            </div>
+            <div id="deviceAdminList" class="deviceAdminList"></div>
+          </aside>
+          <form id="deviceAdminForm" class="deviceAdminForm">
+            <label>
+              <span data-i18n="deviceID">Device ID</span>
+              <input id="adminDeviceId" required>
+            </label>
+            <label>
+              <span data-i18n="displayName">Display name</span>
+              <input id="adminDisplayName" required>
+            </label>
+            <label>
+              <span data-i18n="deviceColor">Device color</span>
+              <input id="adminDeviceColor" type="color">
+            </label>
+            <label>
+              <span data-i18n="deviceToken">Device token</span>
+              <div class="tokenRow">
+                <input id="adminDeviceToken">
+                <button id="generateTokenButton" type="button" data-i18n="generateToken">Generate</button>
+              </div>
+            </label>
+            <fieldset>
+              <legend data-i18n="groupMemberships">Groups</legend>
+              <div id="adminGroupChecks" class="adminGroupChecks"></div>
+            </fieldset>
+            <footer class="deviceAdminFooter">
+              <button id="deleteDeviceButton" class="dangerButton" type="button" data-i18n="deleteDevice">Delete</button>
+              <button id="saveDeviceButton" type="submit" data-i18n="save">Save</button>
+            </footer>
+          </form>
+        </div>
+      </section>
     </dialog>
     <dialog id="monitorDialog" class="monitorDialog">
       <section class="monitorPanel">

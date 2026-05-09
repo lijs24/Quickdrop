@@ -17,6 +17,7 @@ Assertions:
 
 - all three Agents become online through Hub `/api/devices`
 - a non-Hub device can read `/api/monitor`, including online state, SSE connection counts, and last-seen values
+- a non-Hub device can add and delete a trusted device through `/api/devices`, update `group:all`, authenticate as the new device, and persist the change to the Hub config file
 - `laptop -> workstation` text is delivered and logged
 - `workstation -> laptop` text is delivered and logged
 - `laptop -> workstation` file is uploaded, downloaded, and SHA-256 verified

@@ -2,6 +2,15 @@ const messages = {
   "zh-CN": {
     settings: "设置",
     refresh: "刷新",
+    deviceAdmin: "设备管理",
+    newDevice: "新增设备",
+    deleteDevice: "删除设备",
+    generateToken: "生成",
+    groupMemberships: "群组",
+    savedDevice: "设备已保存",
+    deletedDevice: "设备已删除",
+    confirmDeleteDevice: "确定删除这个设备？",
+    tokenRequired: "新设备需要令牌",
     monitor: "监控",
     hubPing: "Hub 延迟",
     hubTime: "Hub 时间",
@@ -56,6 +65,15 @@ const messages = {
   en: {
     settings: "Settings",
     refresh: "Refresh",
+    deviceAdmin: "Devices",
+    newDevice: "New device",
+    deleteDevice: "Delete",
+    generateToken: "Generate",
+    groupMemberships: "Groups",
+    savedDevice: "Device saved",
+    deletedDevice: "Device deleted",
+    confirmDeleteDevice: "Delete this device?",
+    tokenRequired: "New devices require a token",
     monitor: "Monitor",
     hubPing: "Hub ping",
     hubTime: "Hub time",
@@ -120,11 +138,14 @@ const state = {
   connectionState: "disconnected",
   appMode: false,
   monitorTimer: null,
+  deviceAdminSelected: null,
+  deviceAdminNew: false,
 };
 
 const els = {
   deviceLabel: document.getElementById("deviceLabel"),
   refreshButton: document.getElementById("refreshButton"),
+  deviceAdminButton: document.getElementById("deviceAdminButton"),
   monitorButton: document.getElementById("monitorButton"),
   updateButton: document.getElementById("updateButton"),
   closeAppButton: document.getElementById("closeAppButton"),
@@ -162,6 +183,19 @@ const els = {
   settingLocalPort: document.getElementById("settingLocalPort"),
   settingRemoteHost: document.getElementById("settingRemoteHost"),
   settingRemotePort: document.getElementById("settingRemotePort"),
+  deviceAdminDialog: document.getElementById("deviceAdminDialog"),
+  closeDeviceAdminButton: document.getElementById("closeDeviceAdminButton"),
+  deviceAdminStatus: document.getElementById("deviceAdminStatus"),
+  deviceAdminList: document.getElementById("deviceAdminList"),
+  newDeviceButton: document.getElementById("newDeviceButton"),
+  deviceAdminForm: document.getElementById("deviceAdminForm"),
+  adminDeviceId: document.getElementById("adminDeviceId"),
+  adminDisplayName: document.getElementById("adminDisplayName"),
+  adminDeviceColor: document.getElementById("adminDeviceColor"),
+  adminDeviceToken: document.getElementById("adminDeviceToken"),
+  generateTokenButton: document.getElementById("generateTokenButton"),
+  adminGroupChecks: document.getElementById("adminGroupChecks"),
+  deleteDeviceButton: document.getElementById("deleteDeviceButton"),
   monitorDialog: document.getElementById("monitorDialog"),
   closeMonitorButton: document.getElementById("closeMonitorButton"),
   monitorMeta: document.getElementById("monitorMeta"),
@@ -185,6 +219,9 @@ function applyLanguage() {
   setConnectionState(state.connectionState);
   renderLists();
   renderMessages();
+  if (els.deviceAdminDialog.open) {
+    renderDeviceAdmin();
+  }
 }
 
 async function api(path, options = {}) {
@@ -195,7 +232,15 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || response.statusText);
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.error || text || response.statusText);
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        throw new Error(text || response.statusText);
+      }
+      throw err;
+    }
   }
   const contentType = response.headers.get("content-type") || "";
   return contentType.includes("application/json") ? response.json() : response.text();
@@ -468,6 +513,152 @@ function closeSettings() {
   }
 }
 
+async function openDeviceAdmin() {
+  els.deviceAdminStatus.textContent = "";
+  await refreshLists();
+  if (!state.deviceAdminSelected && state.devices[0]) {
+    state.deviceAdminSelected = state.devices[0].id;
+  }
+  state.deviceAdminNew = false;
+  renderDeviceAdmin();
+  if (els.deviceAdminDialog.showModal) {
+    els.deviceAdminDialog.showModal();
+  } else {
+    els.deviceAdminDialog.setAttribute("open", "");
+  }
+}
+
+function closeDeviceAdmin() {
+  if (els.deviceAdminDialog.close) {
+    els.deviceAdminDialog.close();
+  } else {
+    els.deviceAdminDialog.removeAttribute("open");
+  }
+}
+
+function renderDeviceAdmin() {
+  els.deviceAdminList.innerHTML = "";
+  for (const device of state.devices) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `deviceAdminItem${!state.deviceAdminNew && state.deviceAdminSelected === device.id ? " active" : ""}`;
+    item.style.setProperty("--device-color", normalizeColor(device.color || colorForID(device.id)));
+    item.innerHTML = `
+      <span class="deviceColorDot"></span>
+      <span>
+        <strong>${escapeHtml(device.display_name || device.id)}</strong>
+        <small>${escapeHtml(device.id)} - ${device.online ? tr("online") : tr("offline")}</small>
+      </span>
+    `;
+    item.addEventListener("click", () => {
+      state.deviceAdminNew = false;
+      state.deviceAdminSelected = device.id;
+      els.deviceAdminStatus.textContent = "";
+      renderDeviceAdmin();
+    });
+    els.deviceAdminList.appendChild(item);
+  }
+  fillDeviceAdminForm();
+}
+
+function fillDeviceAdminForm() {
+  const device = state.deviceAdminNew ? null : deviceByID(state.deviceAdminSelected);
+  const deviceID = device?.id || "";
+  els.adminDeviceId.value = deviceID;
+  els.adminDeviceId.disabled = Boolean(device);
+  els.adminDisplayName.value = device?.display_name || "";
+  els.adminDeviceColor.value = normalizeColor(device?.color || colorForID(deviceID || "new-device"));
+  els.adminDeviceToken.value = "";
+  els.adminDeviceToken.placeholder = device ? "" : tr("tokenRequired");
+  els.deleteDeviceButton.disabled = !device || device.id === state.me.device_id;
+
+  const selectedGroups = new Set(device ? groupIDsForDevice(device.id) : defaultNewDeviceGroups());
+  els.adminGroupChecks.innerHTML = "";
+  for (const group of state.groups) {
+    const label = document.createElement("label");
+    label.className = "adminGroupCheck";
+    const checked = selectedGroups.has(group.id) ? "checked" : "";
+    label.innerHTML = `
+      <input type="checkbox" value="${escapeHtml(group.id)}" ${checked}>
+      <span>${escapeHtml(group.name || group.id)}</span>
+    `;
+    els.adminGroupChecks.appendChild(label);
+  }
+}
+
+function startNewDevice() {
+  state.deviceAdminNew = true;
+  state.deviceAdminSelected = "";
+  els.deviceAdminStatus.textContent = "";
+  renderDeviceAdmin();
+  els.adminDeviceToken.value = generateToken();
+  els.adminDeviceId.focus();
+}
+
+async function saveAdminDevice(event) {
+  event.preventDefault();
+  const existing = !state.deviceAdminNew && deviceByID(state.deviceAdminSelected);
+  const token = els.adminDeviceToken.value.trim();
+  if (!existing && !token) {
+    els.deviceAdminStatus.textContent = tr("tokenRequired");
+    return;
+  }
+  const body = {
+    id: (existing?.id || els.adminDeviceId.value).trim(),
+    display_name: els.adminDisplayName.value.trim(),
+    color: normalizeColor(els.adminDeviceColor.value),
+    token,
+    group_ids: selectedAdminGroupIDs(),
+  };
+  const saved = await api("/api/devices", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  state.deviceAdminNew = false;
+  state.deviceAdminSelected = saved.id || body.id;
+  await refreshLists();
+  renderDeviceAdmin();
+  els.deviceAdminStatus.textContent = tr("savedDevice");
+}
+
+async function deleteAdminDevice() {
+  const device = deviceByID(state.deviceAdminSelected);
+  if (!device) return;
+  if (!window.confirm(tr("confirmDeleteDevice"))) return;
+  await api(`/api/devices/${encodeURIComponent(device.id)}`, { method: "DELETE" });
+  state.deviceAdminSelected = "";
+  await refreshLists();
+  state.deviceAdminSelected = state.devices[0]?.id || "";
+  renderDeviceAdmin();
+  els.deviceAdminStatus.textContent = tr("deletedDevice");
+}
+
+function selectedAdminGroupIDs() {
+  return Array.from(els.adminGroupChecks.querySelectorAll("input[type='checkbox']:checked")).map((input) => input.value);
+}
+
+function groupIDsForDevice(deviceID) {
+  return state.groups
+    .filter((group) => Array.isArray(group.members) && group.members.includes(deviceID))
+    .map((group) => group.id);
+}
+
+function defaultNewDeviceGroups() {
+  return state.groups.some((group) => group.id === "all") ? ["all"] : [];
+}
+
+function generateToken() {
+  const bytes = new Uint8Array(18);
+  if (window.crypto && window.crypto.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return `qd_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 async function openMonitor() {
   if (els.monitorDialog.showModal) {
     els.monitorDialog.showModal();
@@ -724,6 +915,13 @@ els.settingsButton.addEventListener("click", async () => {
     els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
   }
 });
+els.deviceAdminButton.addEventListener("click", async () => {
+  try {
+    await openDeviceAdmin();
+  } catch (err) {
+    els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
+  }
+});
 els.monitorButton.addEventListener("click", async () => {
   try {
     await openMonitor();
@@ -737,9 +935,29 @@ els.settingLanguage.addEventListener("change", () => {
   applyLanguage();
 });
 els.closeSettingsButton.addEventListener("click", closeSettings);
+els.closeDeviceAdminButton.addEventListener("click", closeDeviceAdmin);
+els.newDeviceButton.addEventListener("click", startNewDevice);
+els.generateTokenButton.addEventListener("click", () => {
+  els.adminDeviceToken.value = generateToken();
+});
+els.deleteDeviceButton.addEventListener("click", async () => {
+  try {
+    await deleteAdminDevice();
+  } catch (err) {
+    els.deviceAdminStatus.textContent = err.message;
+  }
+});
 els.closeMonitorButton.addEventListener("click", closeMonitor);
 els.monitorDialog.addEventListener("close", stopMonitorTimer);
 els.monitorDialog.addEventListener("cancel", stopMonitorTimer);
+els.deviceAdminForm.addEventListener("submit", async (event) => {
+  try {
+    await saveAdminDevice(event);
+  } catch (err) {
+    event.preventDefault();
+    els.deviceAdminStatus.textContent = err.message;
+  }
+});
 els.settingsForm.addEventListener("submit", async (event) => {
   try {
     await saveSettings(event);
