@@ -23,9 +23,9 @@ function Find-Go {
 }
 
 function Git-Value {
-  param([string[]]$Args, [string]$Fallback)
+  param([string[]]$GitArgs, [string]$Fallback)
   try {
-    $output = & git @Args 2>$null
+    $output = & git @GitArgs 2>$null
     if ($LASTEXITCODE -eq 0) {
       $value = ($output | Select-Object -First 1).Trim()
       if ($value) { return $value }
@@ -227,10 +227,10 @@ if (!$Version) {
   if ($env:GITHUB_REF_NAME) {
     $Version = $env:GITHUB_REF_NAME
   } else {
-    $Version = Git-Value -Args @("describe", "--tags", "--always", "--dirty") -Fallback "dev"
+    $Version = Git-Value -GitArgs @("describe", "--tags", "--always", "--dirty") -Fallback "dev"
   }
 }
-$Commit = Git-Value -Args @("rev-parse", "--short", "HEAD") -Fallback "unknown"
+$Commit = Git-Value -GitArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
 $BuiltAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 $dist = Join-Path $root $OutputDir
