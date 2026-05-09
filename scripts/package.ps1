@@ -45,7 +45,7 @@ function Copy-Tree {
   param([string]$From, [string]$To)
   if (!(Test-Path $From)) { return }
   New-Item -ItemType Directory -Force -Path $To | Out-Null
-  Copy-Item -LiteralPath (Join-Path $From "*") -Destination $To -Recurse -Force
+  Copy-Item -Path (Join-Path $From "*") -Destination $To -Recurse -Force
 }
 
 function Compress-ZipWithRetry {
