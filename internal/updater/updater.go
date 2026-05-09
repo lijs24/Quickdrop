@@ -48,6 +48,7 @@ type Release struct {
 }
 
 type Asset struct {
+	URL                string `json:"url"`
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
@@ -100,10 +101,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	result.StagingDir = tmpRoot
 	assetPath := filepath.Join(tmpRoot, asset.Name)
 	checksumsPath := filepath.Join(tmpRoot, checksums.Name)
-	if err := Download(ctx, asset.BrowserDownloadURL, assetPath); err != nil {
+	if err := DownloadAsset(ctx, asset, assetPath); err != nil {
 		return result, err
 	}
-	if err := Download(ctx, checksums.BrowserDownloadURL, checksumsPath); err != nil {
+	if err := DownloadAsset(ctx, checksums, checksumsPath); err != nil {
 		return result, err
 	}
 	if err := VerifyChecksum(assetPath, checksumsPath); err != nil {
@@ -268,11 +269,25 @@ func gitCredentialToken(ctx context.Context) string {
 }
 
 func Download(ctx context.Context, url, dest string) error {
+	return download(ctx, url, dest, false)
+}
+
+func DownloadAsset(ctx context.Context, asset Asset, dest string) error {
+	if asset.URL != "" {
+		return download(ctx, asset.URL, dest, true)
+	}
+	return download(ctx, asset.BrowserDownloadURL, dest, false)
+}
+
+func download(ctx context.Context, url, dest string, githubAssetAPI bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "QuickDrop-Updater")
+	if githubAssetAPI {
+		req.Header.Set("Accept", "application/octet-stream")
+	}
 	if token := GitHubToken(ctx); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

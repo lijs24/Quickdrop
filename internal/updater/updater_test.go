@@ -1,6 +1,13 @@
 package updater
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSelectAsset(t *testing.T) {
 	assets := []Asset{
@@ -53,5 +60,40 @@ func TestIsTargetNewer(t *testing.T) {
 				t.Fatalf("IsTargetNewer(%q, %q) = %v, want %v", tt.current, tt.target, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDownloadAssetUsesGitHubAssetAPI(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	t.Setenv("GITHUB_TOKEN", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/asset" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Accept"); got != "application/octet-stream" {
+			t.Fatalf("Accept = %q, want application/octet-stream", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		_, _ = w.Write([]byte("asset payload"))
+	}))
+	defer server.Close()
+
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+	err := DownloadAsset(context.Background(), Asset{
+		URL:                server.URL + "/asset",
+		BrowserDownloadURL: server.URL + "/wrong",
+		Name:               "asset.zip",
+	}, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "asset payload" {
+		t.Fatalf("downloaded %q", string(data))
 	}
 }
