@@ -1,0 +1,29 @@
+{
+  "role": "agent",
+  "device": {
+    "id": "workstation",
+    "display_name": "Workstation",
+    "token": "dev-workstation-token"
+  },
+  "agent": {
+    "listen": "127.0.0.1:47893",
+    "data_dir": "./data/workstation",
+    "downloads_dir": "./data/workstation/downloads"
+  },
+  "hub_client": {
+    "base_url": "http://127.0.0.1:47891",
+    "sse_url": "http://127.0.0.1:47891/api/events",
+    "use_ssh_tunnel": false
+  },
+  "ssh_tunnel": {
+    "enabled": false,
+    "ssh_host": "quickdrop-server",
+    "local_port": 47891,
+    "remote_host": "127.0.0.1",
+    "remote_port": 47891
+  },
+  "gui": {
+    "listen": "127.0.0.1:47901",
+    "language": "zh-CN"
+  }
+}

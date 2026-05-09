@@ -1,0 +1,41 @@
+{
+  "role": "hub",
+  "device": {
+    "id": "main-server",
+    "display_name": "Main Server",
+    "token": "dev-main-server-token"
+  },
+  "hub": {
+    "listen": "127.0.0.1:47891",
+    "data_dir": "./data/hub",
+    "max_upload_bytes": 1073741824
+  },
+  "devices": [
+    {
+      "id": "laptop",
+      "display_name": "Laptop",
+      "token": "dev-laptop-token"
+    },
+    {
+      "id": "workstation",
+      "display_name": "Workstation",
+      "token": "dev-workstation-token"
+    },
+    {
+      "id": "main-server",
+      "display_name": "Main Server",
+      "token": "dev-main-server-token"
+    }
+  ],
+  "groups": [
+    {
+      "id": "all",
+      "name": "All Devices",
+      "members": [
+        "laptop",
+        "workstation",
+        "main-server"
+      ]
+    }
+  ]
+}

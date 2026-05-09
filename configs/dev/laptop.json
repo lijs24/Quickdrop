@@ -1,0 +1,34 @@
+{
+  "role": "agent",
+  "device": {
+    "id": "laptop",
+    "display_name": "Laptop",
+    "token": "dev-laptop-token"
+  },
+  "hub": {
+    "listen": "127.0.0.1:47891",
+    "data_dir": "./data/hub",
+    "max_upload_bytes": 1073741824
+  },
+  "agent": {
+    "listen": "127.0.0.1:47892",
+    "data_dir": "./data/laptop",
+    "downloads_dir": "./data/laptop/downloads"
+  },
+  "hub_client": {
+    "base_url": "http://127.0.0.1:47891",
+    "sse_url": "http://127.0.0.1:47891/api/events",
+    "use_ssh_tunnel": false
+  },
+  "ssh_tunnel": {
+    "enabled": false,
+    "ssh_host": "quickdrop-server",
+    "local_port": 47891,
+    "remote_host": "127.0.0.1",
+    "remote_port": 47891
+  },
+  "gui": {
+    "listen": "127.0.0.1:47900",
+    "language": "zh-CN"
+  }
+}

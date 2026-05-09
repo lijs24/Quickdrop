@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuickDrop</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <header class="brand">
+          <div>
+            <h1>QuickDrop</h1>
+            <p id="deviceLabel"></p>
+          </div>
+          <div class="brandActions">
+            <button id="settingsButton" type="button" title="Settings" data-i18n="settings">Settings</button>
+            <button id="refreshButton" type="button" title="Refresh" data-i18n="refresh">Refresh</button>
+          </div>
+        </header>
+        <section>
+          <h2 data-i18n="devices">Devices</h2>
+          <div id="devices" class="list"></div>
+        </section>
+        <section>
+          <h2 data-i18n="groups">Groups</h2>
+          <div id="groups" class="list"></div>
+        </section>
+      </aside>
+      <section class="chat">
+        <header class="chatHeader">
+          <div>
+            <h2 id="conversationTitle" data-i18n="selectConversation">Select a conversation</h2>
+            <p id="conversationMeta"></p>
+          </div>
+          <span id="connectionState" data-i18n="disconnected">Disconnected</span>
+        </header>
+        <div id="messages" class="messages"></div>
+        <form id="composer" class="composer">
+          <div class="composerFileRow">
+            <label for="fileInput" data-i18n="file">File</label>
+            <input id="fileInput" type="file">
+            <button id="clearFileButton" type="button" data-i18n="clear">Clear</button>
+          </div>
+          <div class="composerMessageRow">
+            <textarea id="textInput" autocomplete="off" rows="1" placeholder="Message"></textarea>
+            <button type="submit" data-i18n="send">Send</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <dialog id="settingsDialog" class="settingsDialog">
+      <form id="settingsForm" method="dialog" class="settingsForm">
+        <header class="settingsHeader">
+          <div>
+            <h2 data-i18n="settings">Settings</h2>
+            <p id="settingsPath"></p>
+          </div>
+          <button id="closeSettingsButton" type="button" data-i18n="close">Close</button>
+        </header>
+        <section class="settingsGrid">
+          <label>
+            <span data-i18n="role">Role</span>
+            <select id="settingRole">
+              <option value="agent">agent</option>
+              <option value="hub">hub</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="language">Language</span>
+            <select id="settingLanguage">
+              <option value="zh-CN">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="deviceID">Device ID</span>
+            <input id="settingDeviceId" required>
+          </label>
+          <label>
+            <span data-i18n="displayName">Display name</span>
+            <input id="settingDisplayName">
+          </label>
+          <label>
+            <span data-i18n="deviceToken">Device token</span>
+            <input id="settingToken" type="password" required>
+          </label>
+          <label>
+            <span data-i18n="hubURL">Hub URL</span>
+            <input id="settingHubBaseUrl" required>
+          </label>
+          <label>
+            <span data-i18n="sseURL">SSE URL</span>
+            <input id="settingSseUrl">
+          </label>
+          <label>
+            <span data-i18n="agentListen">Agent listen</span>
+            <input id="settingAgentListen">
+          </label>
+          <label>
+            <span data-i18n="agentDataDir">Agent data dir</span>
+            <input id="settingAgentDataDir">
+          </label>
+          <label>
+            <span data-i18n="downloadsDir">Downloads dir</span>
+            <input id="settingDownloadsDir">
+          </label>
+          <label>
+            <span data-i18n="guiListen">GUI listen</span>
+            <input id="settingGuiListen">
+          </label>
+          <label class="checkLabel">
+            <input id="settingUseSshTunnel" type="checkbox">
+            <span data-i18n="useSshTunnel">Use SSH tunnel</span>
+          </label>
+          <label class="checkLabel">
+            <input id="settingSshEnabled" type="checkbox">
+            <span data-i18n="startSshTunnel">Start SSH tunnel</span>
+          </label>
+          <label>
+            <span data-i18n="sshHost">SSH host</span>
+            <input id="settingSshHost">
+          </label>
+          <label>
+            <span data-i18n="localPort">Local port</span>
+            <input id="settingLocalPort" type="number" min="1" max="65535">
+          </label>
+          <label>
+            <span data-i18n="remoteHost">Remote host</span>
+            <input id="settingRemoteHost">
+          </label>
+          <label>
+            <span data-i18n="remotePort">Remote port</span>
+            <input id="settingRemotePort" type="number" min="1" max="65535">
+          </label>
+        </section>
+        <footer class="settingsFooter">
+          <span id="settingsStatus"></span>
+          <button id="saveSettingsButton" type="submit" data-i18n="save">Save</button>
+        </footer>
+      </form>
+    </dialog>
+    <script src="/app.js"></script>
+  </body>
+</html>
