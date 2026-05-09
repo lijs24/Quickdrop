@@ -17,6 +17,7 @@
           <div class="brandActions">
             <button id="settingsButton" type="button" title="Settings" data-i18n="settings">Settings</button>
             <button id="refreshButton" type="button" title="Refresh" data-i18n="refresh">Refresh</button>
+            <button id="monitorButton" type="button" title="Monitor" data-i18n="monitor">Monitor</button>
             <button id="updateButton" class="appOnly" type="button" title="Update" data-i18n="update" hidden>Update</button>
             <button id="closeAppButton" class="appOnly dangerButton" type="button" title="Close app" data-i18n="closeApp" hidden>Close app</button>
           </div>
@@ -85,6 +86,10 @@
             <input id="settingDisplayName">
           </label>
           <label>
+            <span data-i18n="deviceColor">Device color</span>
+            <input id="settingColor" type="color">
+          </label>
+          <label>
             <span data-i18n="deviceToken">Device token</span>
             <input id="settingToken" type="password" required>
           </label>
@@ -142,6 +147,32 @@
           <button id="saveSettingsButton" type="submit" data-i18n="save">Save</button>
         </footer>
       </form>
+    </dialog>
+    <dialog id="monitorDialog" class="monitorDialog">
+      <section class="monitorPanel">
+        <header class="settingsHeader">
+          <div>
+            <h2 data-i18n="monitor">Monitor</h2>
+            <p id="monitorMeta"></p>
+          </div>
+          <button id="closeMonitorButton" type="button" data-i18n="close">Close</button>
+        </header>
+        <div class="monitorSummary">
+          <div>
+            <span data-i18n="hubPing">Hub ping</span>
+            <strong id="hubPingValue">--</strong>
+          </div>
+          <div>
+            <span data-i18n="onlineDevices">Online devices</span>
+            <strong id="onlineDevicesValue">--</strong>
+          </div>
+          <div>
+            <span data-i18n="pendingDeliveries">Pending deliveries</span>
+            <strong id="pendingDeliveriesValue">--</strong>
+          </div>
+        </div>
+        <div id="monitorDevices" class="monitorDevices"></div>
+      </section>
     </dialog>
     <script src="/app.js"></script>
   </body>

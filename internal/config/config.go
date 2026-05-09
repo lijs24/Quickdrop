@@ -12,6 +12,7 @@ type DeviceConfig struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Token       string `json:"token"`
+	Color       string `json:"color,omitempty"`
 }
 
 type GroupConfig struct {
@@ -237,6 +238,7 @@ func devHubConfig() Config {
 			ID:          "main-server",
 			DisplayName: "Main Server",
 			Token:       "dev-main-server-token",
+			Color:       "#0f766e",
 		},
 		Hub: HubConfig{
 			Listen:         "127.0.0.1:47891",
@@ -244,9 +246,9 @@ func devHubConfig() Config {
 			MaxUploadBytes: 1073741824,
 		},
 		Devices: []DeviceConfig{
-			{ID: "laptop", DisplayName: "Laptop", Token: "dev-laptop-token"},
-			{ID: "workstation", DisplayName: "Workstation", Token: "dev-workstation-token"},
-			{ID: "main-server", DisplayName: "Main Server", Token: "dev-main-server-token"},
+			{ID: "laptop", DisplayName: "Laptop", Token: "dev-laptop-token", Color: "#2563eb"},
+			{ID: "workstation", DisplayName: "Workstation", Token: "dev-workstation-token", Color: "#7c3aed"},
+			{ID: "main-server", DisplayName: "Main Server", Token: "dev-main-server-token", Color: "#0f766e"},
 		},
 		Groups: []GroupConfig{
 			{ID: "all", Name: "All Devices", Members: []string{"laptop", "workstation", "main-server"}},
@@ -261,6 +263,7 @@ func devAgentConfig(id, name, token, listen, guiListen string) Config {
 			ID:          id,
 			DisplayName: name,
 			Token:       token,
+			Color:       defaultDeviceColor(id),
 		},
 		Agent: AgentConfig{
 			Listen:       listen,
@@ -284,4 +287,16 @@ func devAgentConfig(id, name, token, listen, guiListen string) Config {
 			Language: "zh-CN",
 		},
 	}
+}
+
+func defaultDeviceColor(id string) string {
+	colors := map[string]string{
+		"laptop":      "#2563eb",
+		"workstation": "#7c3aed",
+		"main-server": "#0f766e",
+	}
+	if color := colors[id]; color != "" {
+		return color
+	}
+	return "#0f766e"
 }

@@ -3,8 +3,14 @@ package protocol
 type Device struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
+	Color       string `json:"color,omitempty"`
 	LastSeenAt  string `json:"last_seen_at,omitempty"`
 	Online      bool   `json:"online"`
+}
+
+type UpdateDeviceProfileRequest struct {
+	DisplayName string `json:"display_name"`
+	Color       string `json:"color"`
 }
 
 type Group struct {
@@ -53,6 +59,17 @@ type MessageEnvelope struct {
 
 type DevicesResponse struct {
 	Devices []Device `json:"devices"`
+}
+
+type MonitorDevice struct {
+	Device
+	SSEConnections    int `json:"sse_connections"`
+	PendingDeliveries int `json:"pending_deliveries"`
+}
+
+type MonitorResponse struct {
+	HubTime string          `json:"hub_time"`
+	Devices []MonitorDevice `json:"devices"`
 }
 
 type GroupsResponse struct {

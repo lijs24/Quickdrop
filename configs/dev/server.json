@@ -3,7 +3,8 @@
   "device": {
     "id": "main-server",
     "display_name": "Main Server",
-    "token": "dev-main-server-token"
+    "token": "dev-main-server-token",
+    "color": "#0f766e"
   },
   "agent": {
     "listen": "127.0.0.1:47894",

@@ -3,7 +3,8 @@
   "device": {
     "id": "laptop",
     "display_name": "Laptop",
-    "token": "dev-laptop-token"
+    "token": "dev-laptop-token",
+    "color": "#2563eb"
   },
   "hub": {
     "listen": "127.0.0.1:47891",

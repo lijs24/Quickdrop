@@ -17,6 +17,8 @@ This repository is intentionally lightweight: one Go module, SQLite storage, RES
 - App mode exposes a close button and page heartbeat so closing the GUI shuts down Agent/GUI/tunnel services instead of leaving QuickDrop in the background.
 - `quickdrop update` checks GitHub Releases, downloads the matching package, verifies `checksums.txt`, and applies the update.
 - The Web GUI includes a Settings panel for editing the current device config without manually editing JSON.
+- Devices can set a profile color. The color appears in the device list and beside sender names in conversations.
+- The Web GUI includes a Monitor panel. Any authenticated device can view Hub reachability, online devices, SSE connection counts, pending deliveries, and last-seen times.
 - `quickdrop init-dev` writes local dev configs and data directories without overwriting existing config files unless `--force` is used.
 - SSH tunnel configuration is present and can start system `ssh -N -L ...` when enabled.
 
@@ -81,7 +83,7 @@ Then open the printed URL, normally:
 http://127.0.0.1:47900
 ```
 
-Use the `Settings` button in the GUI to edit the current device identity, language, Hub URL, local directories, GUI listen address, and SSH tunnel fields. Save writes back to the config file used to start the GUI. Restart the relevant QuickDrop processes after changing connection, identity, listen, or tunnel settings.
+Use the `Settings` button in the GUI to edit the current device identity, language, Hub URL, local directories, GUI listen address, and SSH tunnel fields. Use `Monitor` to watch Hub ping, online devices, pending deliveries, SSE connections, and last-seen times from any connected device. Save writes back to the config file used to start the GUI. Restart the relevant QuickDrop processes after changing connection, identity, listen, or tunnel settings.
 
 The workstation agent should print messages like:
 

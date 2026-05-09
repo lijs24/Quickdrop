@@ -99,6 +99,8 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.Handle("/api/monitor", s.auth(http.HandlerFunc(s.handleMonitor)))
+	mux.Handle("/api/devices/me", s.auth(http.HandlerFunc(s.handleDeviceProfile)))
 	mux.Handle("/api/devices", s.auth(http.HandlerFunc(s.handleDevices)))
 	mux.Handle("/api/groups", s.auth(http.HandlerFunc(s.handleGroups)))
 	mux.Handle("/api/messages", s.auth(http.HandlerFunc(s.handleMessages)))
@@ -121,13 +123,15 @@ func (s *Server) initFromConfig(ctx context.Context) error {
 		if dev.ID == "" || dev.Token == "" {
 			return errors.New("hub config devices require id and token")
 		}
+		color := normalizeDeviceColor(dev.Color)
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO devices(id, display_name, token_hash, created_at, online)
-VALUES(?, ?, ?, ?, 0)
+INSERT INTO devices(id, display_name, token_hash, color, created_at, online)
+VALUES(?, ?, ?, ?, ?, 0)
 ON CONFLICT(id) DO UPDATE SET
   display_name=excluded.display_name,
-  token_hash=excluded.token_hash
-`, dev.ID, dev.DisplayName, auth.HashToken(dev.Token), now); err != nil {
+  token_hash=excluded.token_hash,
+  color=CASE WHEN excluded.color != '' THEN excluded.color ELSE devices.color END
+`, dev.ID, dev.DisplayName, auth.HashToken(dev.Token), color, now); err != nil {
 			return fmt.Errorf("upsert device %s: %w", dev.ID, err)
 		}
 	}
@@ -205,7 +209,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id, display_name, COALESCE(last_seen_at, ''), online FROM devices ORDER BY id`)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id, display_name, COALESCE(color, ''), COALESCE(last_seen_at, ''), online FROM devices ORDER BY id`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list devices: "+err.Error())
 		return
@@ -215,7 +219,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var dev protocol.Device
 		var online int
-		if err := rows.Scan(&dev.ID, &dev.DisplayName, &dev.LastSeenAt, &online); err != nil {
+		if err := rows.Scan(&dev.ID, &dev.DisplayName, &dev.Color, &dev.LastSeenAt, &online); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan device: "+err.Error())
 			return
 		}
@@ -223,6 +227,99 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		devices = append(devices, dev)
 	}
 	writeJSON(w, http.StatusOK, protocol.DevicesResponse{Devices: devices})
+}
+
+func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+SELECT
+  d.id,
+  d.display_name,
+  COALESCE(d.color, ''),
+  COALESCE(d.last_seen_at, ''),
+  d.online,
+  COALESCE(p.pending_count, 0)
+FROM devices d
+LEFT JOIN (
+  SELECT target_device_id, COUNT(*) AS pending_count
+  FROM deliveries
+  WHERE status = 'pending'
+  GROUP BY target_device_id
+) p ON p.target_device_id = d.id
+ORDER BY d.id
+`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load monitor data: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	var devices []protocol.MonitorDevice
+	for rows.Next() {
+		var dev protocol.MonitorDevice
+		var online int
+		if err := rows.Scan(&dev.ID, &dev.DisplayName, &dev.Color, &dev.LastSeenAt, &online, &dev.PendingDeliveries); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan monitor data: "+err.Error())
+			return
+		}
+		dev.Online = online != 0
+		dev.SSEConnections = s.broker.Count(dev.ID)
+		devices = append(devices, dev)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "iterate monitor data: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, protocol.MonitorResponse{
+		HubTime: qsqlite.Now(),
+		Devices: devices,
+	})
+}
+
+func (s *Server) handleDeviceProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var req protocol.UpdateDeviceProfileRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode device profile: "+err.Error())
+		return
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		writeError(w, http.StatusBadRequest, "display_name is required")
+		return
+	}
+	color := normalizeDeviceColor(req.Color)
+	if req.Color != "" && color == "" {
+		writeError(w, http.StatusBadRequest, "color must be a hex value like #2563eb")
+		return
+	}
+	deviceID := currentDeviceID(r)
+	if _, err := s.db.ExecContext(r.Context(), `
+UPDATE devices
+SET display_name = ?, color = ?, last_seen_at = ?
+WHERE id = ?
+`, displayName, color, qsqlite.Now(), deviceID); err != nil {
+		writeError(w, http.StatusInternalServerError, "update device profile: "+err.Error())
+		return
+	}
+	var dev protocol.Device
+	var online int
+	if err := s.db.QueryRowContext(r.Context(), `
+SELECT id, display_name, COALESCE(color, ''), COALESCE(last_seen_at, ''), online
+FROM devices WHERE id = ?
+`, deviceID).Scan(&dev.ID, &dev.DisplayName, &dev.Color, &dev.LastSeenAt, &online); err != nil {
+		writeError(w, http.StatusInternalServerError, "load device profile: "+err.Error())
+		return
+	}
+	dev.Online = online != 0
+	writeJSON(w, http.StatusOK, dev)
 }
 
 func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
@@ -810,6 +907,25 @@ func conversationForViewer(viewer string, msg protocol.Message) string {
 		return "device:" + msg.SenderDeviceID
 	}
 	return "group:" + msg.TargetID
+}
+
+func normalizeDeviceColor(color string) string {
+	color = strings.TrimSpace(strings.ToLower(color))
+	if color == "" {
+		return ""
+	}
+	if !strings.HasPrefix(color, "#") {
+		color = "#" + color
+	}
+	if len(color) != 7 {
+		return ""
+	}
+	for _, ch := range color[1:] {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return ""
+		}
+	}
+	return color
 }
 
 func newID(prefix string) string {

@@ -94,7 +94,35 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_target_status ON deliveries(target_dev
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("apply hub schema: %w", err)
 	}
+	if err := ensureColumn(db, "devices", "color", "TEXT"); err != nil {
+		return fmt.Errorf("migrate devices.color: %w", err)
+	}
 	return nil
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition))
+	return err
 }
 
 func ApplyAgentSchema(db *sql.DB) error {

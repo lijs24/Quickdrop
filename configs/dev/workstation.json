@@ -3,7 +3,8 @@
   "device": {
     "id": "workstation",
     "display_name": "Workstation",
-    "token": "dev-workstation-token"
+    "token": "dev-workstation-token",
+    "color": "#7c3aed"
   },
   "agent": {
     "listen": "127.0.0.1:47893",

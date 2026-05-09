@@ -3,7 +3,8 @@
   "device": {
     "id": "main-server",
     "display_name": "Main Server",
-    "token": "dev-main-server-token"
+    "token": "dev-main-server-token",
+    "color": "#0f766e"
   },
   "hub": {
     "listen": "127.0.0.1:47891",
@@ -14,17 +15,20 @@
     {
       "id": "laptop",
       "display_name": "Laptop",
-      "token": "dev-laptop-token"
+      "token": "dev-laptop-token",
+      "color": "#2563eb"
     },
     {
       "id": "workstation",
       "display_name": "Workstation",
-      "token": "dev-workstation-token"
+      "token": "dev-workstation-token",
+      "color": "#7c3aed"
     },
     {
       "id": "main-server",
       "display_name": "Main Server",
-      "token": "dev-main-server-token"
+      "token": "dev-main-server-token",
+      "color": "#0f766e"
     }
   ],
   "groups": [

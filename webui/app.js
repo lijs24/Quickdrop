@@ -2,6 +2,14 @@ const messages = {
   "zh-CN": {
     settings: "设置",
     refresh: "刷新",
+    monitor: "监控",
+    hubPing: "Hub 延迟",
+    hubTime: "Hub 时间",
+    onlineDevices: "在线设备",
+    pendingDeliveries: "待投递",
+    sseConnections: "SSE 连接",
+    lastSeen: "最后活跃",
+    neverSeen: "从未连接",
     update: "更新",
     closeApp: "关闭应用",
     devices: "设备",
@@ -20,6 +28,7 @@ const messages = {
     language: "语言",
     deviceID: "设备 ID",
     displayName: "显示名称",
+    deviceColor: "设备颜色",
     deviceToken: "设备令牌",
     hubURL: "Hub 地址",
     sseURL: "SSE 地址",
@@ -47,6 +56,14 @@ const messages = {
   en: {
     settings: "Settings",
     refresh: "Refresh",
+    monitor: "Monitor",
+    hubPing: "Hub ping",
+    hubTime: "Hub time",
+    onlineDevices: "Online devices",
+    pendingDeliveries: "Pending deliveries",
+    sseConnections: "SSE connections",
+    lastSeen: "Last seen",
+    neverSeen: "Never seen",
     update: "Update",
     closeApp: "Close app",
     devices: "Devices",
@@ -65,6 +82,7 @@ const messages = {
     language: "Language",
     deviceID: "Device ID",
     displayName: "Display name",
+    deviceColor: "Device color",
     deviceToken: "Device token",
     hubURL: "Hub URL",
     sseURL: "SSE URL",
@@ -101,11 +119,13 @@ const state = {
   language: "zh-CN",
   connectionState: "disconnected",
   appMode: false,
+  monitorTimer: null,
 };
 
 const els = {
   deviceLabel: document.getElementById("deviceLabel"),
   refreshButton: document.getElementById("refreshButton"),
+  monitorButton: document.getElementById("monitorButton"),
   updateButton: document.getElementById("updateButton"),
   closeAppButton: document.getElementById("closeAppButton"),
   settingsButton: document.getElementById("settingsButton"),
@@ -128,6 +148,7 @@ const els = {
   settingLanguage: document.getElementById("settingLanguage"),
   settingDeviceId: document.getElementById("settingDeviceId"),
   settingDisplayName: document.getElementById("settingDisplayName"),
+  settingColor: document.getElementById("settingColor"),
   settingToken: document.getElementById("settingToken"),
   settingHubBaseUrl: document.getElementById("settingHubBaseUrl"),
   settingSseUrl: document.getElementById("settingSseUrl"),
@@ -141,6 +162,13 @@ const els = {
   settingLocalPort: document.getElementById("settingLocalPort"),
   settingRemoteHost: document.getElementById("settingRemoteHost"),
   settingRemotePort: document.getElementById("settingRemotePort"),
+  monitorDialog: document.getElementById("monitorDialog"),
+  closeMonitorButton: document.getElementById("closeMonitorButton"),
+  monitorMeta: document.getElementById("monitorMeta"),
+  hubPingValue: document.getElementById("hubPingValue"),
+  onlineDevicesValue: document.getElementById("onlineDevicesValue"),
+  pendingDeliveriesValue: document.getElementById("pendingDeliveriesValue"),
+  monitorDevices: document.getElementById("monitorDevices"),
 };
 
 function tr(key) {
@@ -207,8 +235,16 @@ function renderLists() {
     const item = document.createElement("div");
     const isLocal = device.id === state.me.device_id;
     item.className = `${itemClass("device", device.id)}${isLocal ? " localDevice" : ""}`;
+    const color = colorForDevice(device.id);
+    item.style.setProperty("--device-color", color);
     const badge = isLocal ? ` <span class="localBadge">${escapeHtml(tr("thisDevice"))}</span>` : "";
-    item.innerHTML = `<strong>${escapeHtml(device.display_name || device.id)}${badge}</strong><span>${escapeHtml(device.id)} - ${device.online ? tr("online") : tr("offline")}</span>`;
+    item.innerHTML = `
+      <div class="deviceNameRow">
+        <span class="deviceColorDot"></span>
+        <strong>${escapeHtml(device.display_name || device.id)}${badge}</strong>
+      </div>
+      <span>${escapeHtml(device.id)} - ${device.online ? tr("online") : tr("offline")}</span>
+    `;
     item.addEventListener("click", () => selectConversation("device", device.id));
     els.devices.appendChild(item);
   }
@@ -273,6 +309,9 @@ function renderMessages() {
     const message = env.message;
     const div = document.createElement("article");
     div.className = message.sender_device_id === state.me.device_id ? "message own" : "message";
+    const sender = deviceByID(message.sender_device_id);
+    const senderColor = colorForDevice(message.sender_device_id);
+    div.style.setProperty("--sender-color", senderColor);
     const status = env.delivery && env.delivery.status ? env.delivery.status : "sent";
     const attachments = (env.attachments || []).map((att) => {
       const href = `/api/attachments/${encodeURIComponent(att.id)}/download`;
@@ -281,7 +320,7 @@ function renderMessages() {
     }).join("");
     div.innerHTML = `
       <div class="messageHeader">
-        <span>${escapeHtml(message.sender_device_id)}</span>
+        <span class="messageSender"><span class="senderDot"></span>${escapeHtml(sender?.display_name || message.sender_device_id)}</span>
         <span>${escapeHtml(formatTime(message.created_at))}</span>
         <span>${escapeHtml(status)}</span>
       </div>
@@ -350,6 +389,7 @@ function fillSettings(data) {
   els.settingLanguage.value = normalizedLanguage(gui.language);
   els.settingDeviceId.value = device.id || "";
   els.settingDisplayName.value = device.display_name || "";
+  els.settingColor.value = normalizeColor(device.color || colorForID(device.id || "device"));
   els.settingToken.value = device.token || "";
   els.settingHubBaseUrl.value = hubClient.base_url || data.effective_base_url || "";
   els.settingSseUrl.value = hubClient.sse_url || "";
@@ -376,6 +416,7 @@ async function saveSettings(event) {
       ...(previous.device || {}),
       id: els.settingDeviceId.value.trim(),
       display_name: els.settingDisplayName.value.trim(),
+      color: normalizeColor(els.settingColor.value),
       token: els.settingToken.value,
     },
     agent: {
@@ -414,6 +455,8 @@ async function saveSettings(event) {
   state.language = nextLanguage;
   applyLanguage();
   fillSettings(saved);
+  await refreshLists();
+  renderMessages();
   els.settingsStatus.textContent = tr("savedRestart");
 }
 
@@ -423,6 +466,99 @@ function closeSettings() {
   } else {
     els.settingsDialog.removeAttribute("open");
   }
+}
+
+async function openMonitor() {
+  if (els.monitorDialog.showModal) {
+    els.monitorDialog.showModal();
+  } else {
+    els.monitorDialog.setAttribute("open", "");
+  }
+  await refreshMonitor();
+  stopMonitorTimer();
+  state.monitorTimer = window.setInterval(() => {
+    refreshMonitor().catch(() => {});
+  }, 3000);
+}
+
+function closeMonitor() {
+  stopMonitorTimer();
+  if (els.monitorDialog.close) {
+    els.monitorDialog.close();
+  } else {
+    els.monitorDialog.removeAttribute("open");
+  }
+}
+
+function stopMonitorTimer() {
+  if (state.monitorTimer) {
+    window.clearInterval(state.monitorTimer);
+    state.monitorTimer = null;
+  }
+}
+
+async function refreshMonitor() {
+  const pingStart = performance.now();
+  await api("/api/health");
+  const pingMs = Math.max(0, Math.round(performance.now() - pingStart));
+  const data = await api("/api/monitor");
+  renderMonitor(data, pingMs);
+}
+
+function renderMonitor(data, pingMs) {
+  const devices = data.devices || [];
+  const onlineCount = devices.filter((device) => device.online).length;
+  const pendingCount = devices.reduce((sum, device) => sum + Number(device.pending_deliveries || 0), 0);
+  els.hubPingValue.textContent = `${pingMs} ms`;
+  els.onlineDevicesValue.textContent = `${onlineCount} / ${devices.length}`;
+  els.pendingDeliveriesValue.textContent = String(pendingCount);
+  els.monitorMeta.textContent = data.hub_time ? `${tr("hubTime")}: ${formatTime(data.hub_time)}` : "";
+  els.monitorDevices.innerHTML = "";
+  for (const device of devices) {
+    const row = document.createElement("div");
+    row.className = "monitorDevice";
+    row.style.setProperty("--device-color", normalizeColor(device.color || colorForID(device.id)));
+    const lastSeen = device.last_seen_at ? relativeTime(device.last_seen_at) : tr("neverSeen");
+    row.innerHTML = `
+      <div class="monitorDeviceMain">
+        <span class="deviceColorDot"></span>
+        <div>
+          <strong>${escapeHtml(device.display_name || device.id)}</strong>
+          <span>${escapeHtml(device.id)}</span>
+        </div>
+      </div>
+      <div class="monitorBadges">
+        <span class="${device.online ? "statusBadge onlineBadge" : "statusBadge offlineBadge"}">${device.online ? tr("online") : tr("offline")}</span>
+        <span class="statusBadge">${escapeHtml(tr("sseConnections"))}: ${Number(device.sse_connections || 0)}</span>
+        <span class="statusBadge">${escapeHtml(tr("pendingDeliveries"))}: ${Number(device.pending_deliveries || 0)}</span>
+        <span class="statusBadge">${escapeHtml(tr("lastSeen"))}: ${escapeHtml(lastSeen)}</span>
+      </div>
+    `;
+    els.monitorDevices.appendChild(row);
+  }
+}
+
+function deviceByID(id) {
+  return state.devices.find((device) => device.id === id);
+}
+
+function colorForDevice(id) {
+  const device = deviceByID(id);
+  return normalizeColor(device?.color || colorForID(id));
+}
+
+function colorForID(id) {
+  const palette = ["#2563eb", "#7c3aed", "#0f766e", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#be185d"];
+  let hash = 0;
+  for (const ch of String(id || "device")) {
+    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  }
+  return palette[hash % palette.length];
+}
+
+function normalizeColor(value) {
+  const color = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : "#0f766e";
 }
 
 function syncAppControls() {
@@ -500,6 +636,7 @@ function connectEvents() {
   const events = new EventSource("/api/events");
   events.onopen = () => {
     setConnectionState("connected");
+    refreshLists().then(loadMessages).catch(() => {});
   };
   events.onerror = () => {
     setConnectionState("reconnecting");
@@ -515,6 +652,18 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString(state.language === "zh-CN" ? "zh-CN" : undefined);
+}
+
+function relativeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 45) return state.language === "zh-CN" ? "刚刚" : "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return state.language === "zh-CN" ? `${minutes} 分钟前` : `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return state.language === "zh-CN" ? `${hours} 小时前` : `${hours}h ago`;
+  return formatTime(value);
 }
 
 function formatBytes(value) {
@@ -575,11 +724,22 @@ els.settingsButton.addEventListener("click", async () => {
     els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
   }
 });
+els.monitorButton.addEventListener("click", async () => {
+  try {
+    await openMonitor();
+  } catch (err) {
+    closeMonitor();
+    els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
+  }
+});
 els.settingLanguage.addEventListener("change", () => {
   state.language = normalizedLanguage(els.settingLanguage.value);
   applyLanguage();
 });
 els.closeSettingsButton.addEventListener("click", closeSettings);
+els.closeMonitorButton.addEventListener("click", closeMonitor);
+els.monitorDialog.addEventListener("close", stopMonitorTimer);
+els.monitorDialog.addEventListener("cancel", stopMonitorTimer);
 els.settingsForm.addEventListener("submit", async (event) => {
   try {
     await saveSettings(event);

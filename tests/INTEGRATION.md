@@ -16,6 +16,7 @@ The test creates an isolated temp workspace, builds `quickdrop`, allocates rando
 Assertions:
 
 - all three Agents become online through Hub `/api/devices`
+- a non-Hub device can read `/api/monitor`, including online state, SSE connection counts, and last-seen values
 - `laptop -> workstation` text is delivered and logged
 - `workstation -> laptop` text is delivered and logged
 - `laptop -> workstation` file is uploaded, downloaded, and SHA-256 verified
@@ -24,6 +25,7 @@ Assertions:
 - group text reaches both other online Agents
 - when `workstation` is stopped, Hub marks it offline
 - a `laptop -> workstation` message stays `pending`
+- `/api/monitor` reports the pending delivery while `workstation` is offline
 - after `workstation` restarts, the pending message is replayed and becomes `delivered`
 
 Run:

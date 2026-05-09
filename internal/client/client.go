@@ -49,6 +49,14 @@ func (c *Client) Devices(ctx context.Context) ([]protocol.Device, error) {
 	return resp.Devices, nil
 }
 
+func (c *Client) UpdateDeviceProfile(ctx context.Context, req protocol.UpdateDeviceProfileRequest) (protocol.Device, error) {
+	var dev protocol.Device
+	if err := c.doJSON(ctx, http.MethodPost, "/api/devices/me", req, &dev); err != nil {
+		return protocol.Device{}, err
+	}
+	return dev, nil
+}
+
 func (c *Client) Groups(ctx context.Context) ([]protocol.Group, error) {
 	var resp protocol.GroupsResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/api/groups", nil, &resp); err != nil {

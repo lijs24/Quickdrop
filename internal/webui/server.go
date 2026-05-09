@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"quickdrop/internal/client"
 	"quickdrop/internal/config"
+	"quickdrop/internal/protocol"
 	"quickdrop/internal/transport"
 	assets "quickdrop/webui"
 )
@@ -62,6 +64,7 @@ func RunWithBaseURL(ctx context.Context, cfg *config.Config, baseURL string, opt
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"device_id":    cfg.Device.ID,
 			"display_name": cfg.Device.DisplayName,
+			"color":        cfg.Device.Color,
 			"hub_base_url": baseURL,
 			"language":     cfg.GUI.Language,
 			"app_mode":     fmt.Sprintf("%t", opts.AppMode),
@@ -140,6 +143,7 @@ func RunWithBaseURL(ctx context.Context, cfg *config.Config, baseURL string, opt
 				return
 			}
 			*cfg = next
+			syncDeviceProfile(r.Context(), baseURL, cfg)
 			writeSettings(w, cfg, baseURL)
 		default:
 			http.Error(w, "GET or POST required", http.StatusMethodNotAllowed)
@@ -192,6 +196,17 @@ func writeSettings(w http.ResponseWriter, cfg *config.Config, effectiveBaseURL s
 		"config":             cfg,
 		"restart_required":   true,
 	})
+}
+
+func syncDeviceProfile(ctx context.Context, baseURL string, cfg *config.Config) {
+	hubClient := client.NewFromConfig(cfg, baseURL)
+	req := protocol.UpdateDeviceProfileRequest{
+		DisplayName: cfg.Device.DisplayName,
+		Color:       cfg.Device.Color,
+	}
+	if _, err := hubClient.UpdateDeviceProfile(ctx, req); err != nil {
+		log.Printf("[QuickDrop] sync device profile: %v", err)
+	}
 }
 
 func LocalURL(listen string) string {

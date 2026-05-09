@@ -79,6 +79,7 @@ func TestLocalMultiDeviceTransfersAndOfflineReplay(t *testing.T) {
 	procs = append(procs, startProcess(t, ctx, exe, tmp, "agent", paths["workstation"]))
 	procs = append(procs, startProcess(t, ctx, exe, tmp, "agent", paths["server"]))
 	waitForOnline(t, ctx, hubBaseURL, "laptop", []string{"laptop", "workstation", "main-server"})
+	waitForMonitorOnline(t, ctx, hubBaseURL, "laptop", []string{"laptop", "workstation", "main-server"})
 
 	// Bidirectional text delivery between laptop and workstation.
 	runQuickDrop(t, ctx, exe, tmp, "text", "-c", paths["laptop"], "device:workstation", "laptop to workstation")
@@ -111,6 +112,7 @@ func TestLocalMultiDeviceTransfersAndOfflineReplay(t *testing.T) {
 	out = runQuickDrop(t, ctx, exe, tmp, "text", "-c", paths["laptop"], "device:workstation", "offline text for workstation")
 	offlineMessageID := parseMessageID(t, out)
 	waitForDeliveryStatus(t, ctx, filepath.Join(tmp, "data", "hub", "quickdrop.db"), offlineMessageID, "workstation", "pending")
+	waitForMonitorPending(t, ctx, hubBaseURL, "laptop", "workstation", 1)
 
 	procs = append(procs, startProcessNamed(t, ctx, exe, tmp, "workstation-restart", "agent", paths["workstation"]))
 	waitForLog(t, ctx, filepath.Join(tmp, "logs", "workstation-restart.err.log"), "New text from laptop: offline text for workstation")
@@ -372,11 +374,7 @@ func getDevices(ctx context.Context, baseURL, authDevice string) (map[string]boo
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Device-ID", authDevice)
-	req.Header.Set("Authorization", "Bearer dev-"+authDevice+"-token")
-	if authDevice == "main-server" {
-		req.Header.Set("Authorization", "Bearer dev-main-server-token")
-	}
+	setAuthHeaders(req, authDevice)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -400,6 +398,91 @@ func getDevices(ctx context.Context, baseURL, authDevice string) (map[string]boo
 		devices[dev.ID] = dev.Online
 	}
 	return devices, nil
+}
+
+type monitorDevice struct {
+	ID                string `json:"id"`
+	Online            bool   `json:"online"`
+	LastSeenAt        string `json:"last_seen_at"`
+	SSEConnections    int    `json:"sse_connections"`
+	PendingDeliveries int    `json:"pending_deliveries"`
+}
+
+func waitForMonitorOnline(t *testing.T, ctx context.Context, baseURL, authDevice string, ids []string) {
+	t.Helper()
+	waitFor(t, ctx, func() (bool, string) {
+		devices, err := getMonitor(ctx, baseURL, authDevice)
+		if err != nil {
+			return false, err.Error()
+		}
+		for _, id := range ids {
+			dev, ok := devices[id]
+			if !ok {
+				return false, fmt.Sprintf("%s missing from monitor", id)
+			}
+			if !dev.Online {
+				return false, fmt.Sprintf("%s is offline in monitor", id)
+			}
+			if dev.SSEConnections < 1 {
+				return false, fmt.Sprintf("%s has no SSE connection in monitor", id)
+			}
+			if dev.LastSeenAt == "" {
+				return false, fmt.Sprintf("%s has no last_seen_at in monitor", id)
+			}
+		}
+		return true, ""
+	})
+}
+
+func waitForMonitorPending(t *testing.T, ctx context.Context, baseURL, authDevice, id string, minPending int) {
+	t.Helper()
+	waitFor(t, ctx, func() (bool, string) {
+		devices, err := getMonitor(ctx, baseURL, authDevice)
+		if err != nil {
+			return false, err.Error()
+		}
+		dev, ok := devices[id]
+		if !ok {
+			return false, fmt.Sprintf("%s missing from monitor", id)
+		}
+		return dev.PendingDeliveries >= minPending, fmt.Sprintf("%s pending deliveries = %d", id, dev.PendingDeliveries)
+	})
+}
+
+func getMonitor(ctx context.Context, baseURL, authDevice string) (map[string]monitorDevice, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/monitor", nil)
+	if err != nil {
+		return nil, err
+	}
+	setAuthHeaders(req, authDevice)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("monitor returned %s: %s", resp.Status, data)
+	}
+	var payload struct {
+		Devices []monitorDevice `json:"devices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	devices := map[string]monitorDevice{}
+	for _, dev := range payload.Devices {
+		devices[dev.ID] = dev
+	}
+	return devices, nil
+}
+
+func setAuthHeaders(req *http.Request, authDevice string) {
+	req.Header.Set("X-Device-ID", authDevice)
+	req.Header.Set("Authorization", "Bearer dev-"+authDevice+"-token")
+	if authDevice == "main-server" {
+		req.Header.Set("Authorization", "Bearer dev-main-server-token")
+	}
 }
 
 func waitForLog(t *testing.T, ctx context.Context, path, needle string) {

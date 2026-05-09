@@ -277,9 +277,9 @@ func runDevices(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-18s %-24s %-8s %s\n", "DEVICE", "DISPLAY", "ONLINE", "LAST SEEN")
+	fmt.Printf("%-18s %-24s %-9s %-8s %s\n", "DEVICE", "DISPLAY", "COLOR", "ONLINE", "LAST SEEN")
 	for _, dev := range devices {
-		fmt.Printf("%-18s %-24s %-8t %s\n", dev.ID, dev.DisplayName, dev.Online, dev.LastSeenAt)
+		fmt.Printf("%-18s %-24s %-9s %-8t %s\n", dev.ID, dev.DisplayName, dev.Color, dev.Online, dev.LastSeenAt)
 	}
 	return nil
 }
