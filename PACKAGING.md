@@ -1,6 +1,6 @@
 # Packaging and GitHub Releases
 
-QuickDrop uses portable release packages. There is no installer, service registration, or auto-update step yet.
+QuickDrop uses portable release packages. There is no installer or service registration. Updates are user-triggered through `quickdrop update` or the app UI.
 
 ## Local Packaging
 
@@ -23,8 +23,9 @@ Outputs are written to `dist/`:
 Each package contains:
 
 - `quickdrop` or `quickdrop.exe`
+- `QuickDropApp.exe` on Windows, a GUI-mode launcher for double-click app startup
 - `configs/dev/*.json`
-- `start-hub`, `start-agent`, and `start-gui` scripts for the target OS
+- `start-app`, `start-hub-app`, `start-hub`, `start-agent`, and `start-gui` scripts for the target OS
 - `README.md`, `QUICKSTART.md`, and `INTEGRATION.md`
 
 On Linux/macOS, run `chmod +x quickdrop start-*.sh` after extracting if your archive tool does not preserve executable bits.
@@ -54,6 +55,14 @@ For the MVP, distribute the matching package to each device:
 
 One device runs Hub. Each other device runs Agent and GUI with its own config. The GUI Settings panel can edit language, identity, Hub URL, SSH tunnel fields, and local directories.
 
+For normal use, start app mode:
+
+```powershell
+.\quickdrop.exe app -c configs\dev\laptop.json
+```
+
+On Windows, double-click `QuickDropApp.exe` to run app mode with the default config. App mode binds Agent, GUI, and SSH tunnel lifetime together; closing the GUI page or pressing `Close app` shuts down the background services.
+
 For real cross-device use, prefer SSH tunnel mode first:
 
 - Hub listens on `127.0.0.1:<remote_port>`.
@@ -61,3 +70,13 @@ For real cross-device use, prefer SSH tunnel mode first:
 - Agent/GUI connect to `http://127.0.0.1:<local_port>`.
 
 The dev configs are convenient starter templates. Replace dev tokens before using QuickDrop as a real personal transfer tool.
+
+## Updates
+
+Packaged installs can update themselves from GitHub Releases:
+
+```powershell
+.\quickdrop.exe update
+```
+
+On Windows, QuickDrop downloads and verifies the package, writes `quickdrop-apply-update.cmd`, and starts it. The script waits for the current QuickDrop process to exit before copying the new files, avoiding the locked-executable problem.

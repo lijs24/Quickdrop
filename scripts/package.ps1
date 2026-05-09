@@ -48,6 +48,19 @@ function Copy-Tree {
   Copy-Item -LiteralPath (Join-Path $From "*") -Destination $To -Recurse -Force
 }
 
+function Compress-ZipWithRetry {
+  param([string]$Path, [string]$DestinationPath)
+  for ($i = 1; $i -le 5; $i++) {
+    try {
+      Compress-Archive -Path $Path -DestinationPath $DestinationPath -Force
+      return
+    } catch {
+      if ($i -eq 5) { throw }
+      Start-Sleep -Seconds $i
+    }
+  }
+}
+
 function New-StartScripts {
   param([string]$Stage, [string]$OS, [string]$Binary)
 
@@ -68,6 +81,45 @@ param([string]`$Config = "configs\dev\laptop.json")
 `$ErrorActionPreference = "Stop"
 `$Root = `$PSScriptRoot
 & (Join-Path `$Root "$Binary") gui -c (Join-Path `$Root `$Config)
+"@
+    Write-Utf8NoBom (Join-Path $Stage "start-app.cmd") @"
+@echo off
+setlocal
+set "ROOT=%~dp0"
+if "%~1"=="" (
+  set "CONFIG=%ROOT%configs\dev\laptop.json"
+) else (
+  set "CONFIG=%~1"
+)
+"%ROOT%$Binary" app -c "%CONFIG%"
+"@
+    Write-Utf8NoBom (Join-Path $Stage "start-hub-app.cmd") @"
+@echo off
+setlocal
+set "ROOT=%~dp0"
+"%ROOT%$Binary" app -c "%ROOT%configs\dev\server.json" -hub-config "%ROOT%configs\dev\hub.json"
+"@
+    Write-Utf8NoBom (Join-Path $Stage "start-agent.cmd") @"
+@echo off
+setlocal
+set "ROOT=%~dp0"
+if "%~1"=="" (
+  set "CONFIG=%ROOT%configs\dev\laptop.json"
+) else (
+  set "CONFIG=%~1"
+)
+"%ROOT%$Binary" agent -c "%CONFIG%"
+"@
+    Write-Utf8NoBom (Join-Path $Stage "start-gui.cmd") @"
+@echo off
+setlocal
+set "ROOT=%~dp0"
+if "%~1"=="" (
+  set "CONFIG=%ROOT%configs\dev\laptop.json"
+) else (
+  set "CONFIG=%~1"
+)
+"%ROOT%$Binary" gui -c "%CONFIG%"
 "@
     return
   }
@@ -92,6 +144,19 @@ DIR=`$(CDPATH= cd -- "`$(dirname -- "`$0")" && pwd)
 CONFIG=`${1:-configs/dev/laptop.json}
 exec "`$DIR/$Binary" gui -c "`$DIR/`$CONFIG"
 "@
+  Write-Utf8NoBom (Join-Path $Stage "start-app.sh") @"
+#!/usr/bin/env sh
+set -eu
+DIR=`$(CDPATH= cd -- "`$(dirname -- "`$0")" && pwd)
+CONFIG=`${1:-configs/dev/laptop.json}
+exec "`$DIR/$Binary" app -c "`$DIR/`$CONFIG"
+"@
+  Write-Utf8NoBom (Join-Path $Stage "start-hub-app.sh") @"
+#!/usr/bin/env sh
+set -eu
+DIR=`$(CDPATH= cd -- "`$(dirname -- "`$0")" && pwd)
+exec "`$DIR/$Binary" app -c "`$DIR/configs/dev/server.json" -hub-config "`$DIR/configs/dev/hub.json"
+"@
 }
 
 function New-QuickStart {
@@ -102,6 +167,9 @@ function New-QuickStart {
     "# QuickDrop Portable Package",
     "",
     "This package is a portable build. It does not install a service or modify the system.",
+    "",
+    "Double-click QuickDropApp.exe on Windows, or run $runPrefix with no arguments, to open the integrated app mode.",
+    "App mode starts the GUI and Agent together. Closing the GUI page or pressing Close app shuts down the background services.",
     "",
     "## First local demo",
     "",
@@ -153,6 +221,7 @@ function New-QuickStart {
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$mainPackage = Join-Path (Join-Path $root "cmd") "quickdrop"
 $go = Find-Go
 if (!$Version) {
   if ($env:GITHUB_REF_NAME) {
@@ -196,19 +265,25 @@ try {
     $env:CGO_ENABLED = "0"
     $ldflags = "-s -w -X main.version=$Version -X main.commit=$Commit -X main.builtAt=$BuiltAt"
     Write-Host "Building $target -> $pkgName"
-    & $go build -trimpath "-ldflags=$ldflags" -o $binaryPath "$root\cmd\quickdrop"
+    & $go build -trimpath "-ldflags=$ldflags" -o $binaryPath $mainPackage
     if ($LASTEXITCODE -ne 0) { throw "go build failed for $target" }
+    if ($os -eq "windows") {
+      $guiBinaryPath = Join-Path $stage "QuickDropApp.exe"
+      $guiLdflags = "$ldflags -H=windowsgui"
+      & $go build -trimpath "-ldflags=$guiLdflags" -o $guiBinaryPath $mainPackage
+      if ($LASTEXITCODE -ne 0) { throw "go build GUI launcher failed for $target" }
+    }
 
     Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $stage -Force
     Copy-Item -LiteralPath (Join-Path $root "AGENTS.md") -Destination $stage -Force
     Copy-Tree (Join-Path $root "configs") (Join-Path $stage "configs")
-    Copy-Item -LiteralPath (Join-Path $root "tests\INTEGRATION.md") -Destination $stage -Force
+    Copy-Item -LiteralPath (Join-Path (Join-Path $root "tests") "INTEGRATION.md") -Destination $stage -Force
     New-StartScripts $stage $os $binary
     New-QuickStart $stage $os $binary
 
     if ($os -eq "windows") {
       $archive = Join-Path $dist "$pkgName.zip"
-      Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive -Force
+      Compress-ZipWithRetry -Path (Join-Path $stage "*") -DestinationPath $archive
     } else {
       $archive = Join-Path $dist "$pkgName.tar.gz"
       & tar -czf $archive -C $dist $pkgName

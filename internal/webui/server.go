@@ -17,13 +17,24 @@ import (
 	assets "quickdrop/webui"
 )
 
+type Options struct {
+	AppMode     bool
+	Version     string
+	OnShutdown  func()
+	OnHeartbeat func()
+	OnUpdate    func(context.Context) (any, error)
+}
+
 func Run(ctx context.Context, cfg *config.Config) error {
 	tunnel, baseURL, err := transport.StartTunnelIfEnabled(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer tunnel.Close()
+	return RunWithBaseURL(ctx, cfg, baseURL, Options{})
+}
 
+func RunWithBaseURL(ctx context.Context, cfg *config.Config, baseURL string, opts Options) error {
 	target, err := url.Parse(baseURL)
 	if err != nil {
 		return fmt.Errorf("parse hub base_url: %w", err)
@@ -53,7 +64,61 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			"display_name": cfg.Device.DisplayName,
 			"hub_base_url": baseURL,
 			"language":     cfg.GUI.Language,
+			"app_mode":     fmt.Sprintf("%t", opts.AppMode),
+			"version":      opts.Version,
 		})
+	})
+	mux.HandleFunc("/app/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET required", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"app_mode": opts.AppMode,
+			"version":  opts.Version,
+		})
+	})
+	mux.HandleFunc("/app/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		if opts.OnHeartbeat != nil {
+			opts.OnHeartbeat()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("/app/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		if !opts.AppMode || opts.OnShutdown == nil {
+			http.Error(w, "app shutdown is only available in app mode", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		go opts.OnShutdown()
+	})
+	mux.HandleFunc("/app/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		if !opts.AppMode || opts.OnUpdate == nil {
+			http.Error(w, "app update is only available in app mode", http.StatusNotFound)
+			return
+		}
+		result, err := opts.OnUpdate(r.Context())
+		if err != nil {
+			http.Error(w, "update: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
 	})
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -127,4 +192,18 @@ func writeSettings(w http.ResponseWriter, cfg *config.Config, effectiveBaseURL s
 		"config":             cfg,
 		"restart_required":   true,
 	})
+}
+
+func LocalURL(listen string) string {
+	host := listen
+	if strings.HasPrefix(host, ":") {
+		host = "127.0.0.1" + host
+	}
+	if strings.HasPrefix(host, "0.0.0.0:") {
+		host = "127.0.0.1:" + strings.TrimPrefix(host, "0.0.0.0:")
+	}
+	if strings.HasPrefix(host, "[::]:") {
+		host = "127.0.0.1:" + strings.TrimPrefix(host, "[::]:")
+	}
+	return "http://" + host + "/"
 }

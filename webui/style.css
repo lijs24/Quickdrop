@@ -93,6 +93,14 @@ button:hover {
   border-color: var(--accent);
 }
 
+.dangerButton {
+  color: var(--danger);
+}
+
+.appOnly[hidden] {
+  display: none;
+}
+
 .list {
   display: grid;
   gap: 6px;

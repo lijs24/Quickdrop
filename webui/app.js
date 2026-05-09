@@ -2,6 +2,8 @@ const messages = {
   "zh-CN": {
     settings: "设置",
     refresh: "刷新",
+    update: "更新",
+    closeApp: "关闭应用",
     devices: "设备",
     groups: "群组",
     selectConversation: "选择一个会话",
@@ -37,10 +39,16 @@ const messages = {
     offline: "离线",
     saving: "正在保存...",
     savedRestart: "已保存。连接、身份、监听或隧道设置需要重启 QuickDrop 后生效。",
+    checkingUpdate: "正在检查更新...",
+    updateStarted: "更新程序已启动，QuickDrop 将关闭并应用新版本。",
+    alreadyUpdated: "已经是最新版本。",
+    noNewerRelease: "没有更新的正式版本。",
   },
   en: {
     settings: "Settings",
     refresh: "Refresh",
+    update: "Update",
+    closeApp: "Close app",
     devices: "Devices",
     groups: "Groups",
     selectConversation: "Select a conversation",
@@ -76,6 +84,10 @@ const messages = {
     offline: "offline",
     saving: "Saving...",
     savedRestart: "Saved. Restart QuickDrop to apply connection, identity, listen, or tunnel changes.",
+    checkingUpdate: "Checking for updates...",
+    updateStarted: "Updater started. QuickDrop will close and apply the new version.",
+    alreadyUpdated: "Already up to date.",
+    noNewerRelease: "No newer release is available.",
   },
 };
 
@@ -88,11 +100,14 @@ const state = {
   settingsConfig: null,
   language: "zh-CN",
   connectionState: "disconnected",
+  appMode: false,
 };
 
 const els = {
   deviceLabel: document.getElementById("deviceLabel"),
   refreshButton: document.getElementById("refreshButton"),
+  updateButton: document.getElementById("updateButton"),
+  closeAppButton: document.getElementById("closeAppButton"),
   settingsButton: document.getElementById("settingsButton"),
   devices: document.getElementById("devices"),
   groups: document.getElementById("groups"),
@@ -161,7 +176,9 @@ async function api(path, options = {}) {
 async function loadConfig() {
   state.me = await api("/config");
   state.language = normalizedLanguage(state.me.language);
+  state.appMode = state.me.app_mode === true || state.me.app_mode === "true";
   applyLanguage();
+  syncAppControls();
   els.deviceLabel.textContent = `${state.me.display_name} (${state.me.device_id})`;
 }
 
@@ -408,6 +425,57 @@ function closeSettings() {
   }
 }
 
+function syncAppControls() {
+  for (const button of [els.updateButton, els.closeAppButton]) {
+    if (!button) continue;
+    button.hidden = !state.appMode;
+  }
+}
+
+function startAppHeartbeat() {
+  if (!state.appMode) return;
+  const beat = () => {
+    fetch("/app/heartbeat", { method: "POST", keepalive: true }).catch(() => {});
+  };
+  beat();
+  window.setInterval(beat, 2000);
+}
+
+async function closeApp() {
+  if (!state.appMode) return;
+  await api("/app/shutdown", { method: "POST" });
+  window.setTimeout(() => {
+    window.close();
+  }, 250);
+}
+
+async function updateApp() {
+  if (!state.appMode) return;
+  const originalText = els.updateButton.textContent;
+  els.updateButton.disabled = true;
+  els.updateButton.textContent = tr("checkingUpdate");
+  try {
+    const result = await api("/app/update", { method: "POST" });
+    if (result.already_current || result.AlreadyCurrent) {
+      const currentVersion = result.current_version || result.CurrentVersion;
+      const targetVersion = result.target_version || result.TargetVersion;
+      els.updateButton.textContent = currentVersion && targetVersion && currentVersion !== targetVersion
+        ? `${tr("noNewerRelease")} ${currentVersion} -> ${targetVersion}`
+        : tr("alreadyUpdated");
+      window.setTimeout(() => {
+        els.updateButton.textContent = originalText;
+        els.updateButton.disabled = false;
+      }, 2500);
+      return;
+    }
+    els.updateButton.textContent = tr("updateStarted");
+  } catch (err) {
+    els.updateButton.textContent = originalText;
+    els.updateButton.disabled = false;
+    els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
 function numberOrZero(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -477,6 +545,7 @@ async function boot() {
     await refreshLists();
     resizeComposer();
     connectEvents();
+    startAppHeartbeat();
   } catch (err) {
     els.messages.innerHTML = `<div class="empty error">${escapeHtml(err.message)}</div>`;
   }
@@ -486,6 +555,8 @@ els.refreshButton.addEventListener("click", async () => {
   await refreshLists();
   await loadMessages();
 });
+els.updateButton.addEventListener("click", updateApp);
+els.closeAppButton.addEventListener("click", closeApp);
 els.composer.addEventListener("submit", sendCurrent);
 els.textInput.addEventListener("input", resizeComposer);
 els.textInput.addEventListener("keydown", (event) => {

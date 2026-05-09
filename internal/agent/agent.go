@@ -22,6 +22,18 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Role != "agent" {
 		return fmt.Errorf("config role must be agent, got %q", cfg.Role)
 	}
+	tunnel, baseURL, err := transport.StartTunnelIfEnabled(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer tunnel.Close()
+	return RunWithBaseURL(ctx, cfg, baseURL)
+}
+
+func RunWithBaseURL(ctx context.Context, cfg *config.Config, baseURL string) error {
+	if cfg.Role != "agent" {
+		return fmt.Errorf("config role must be agent, got %q", cfg.Role)
+	}
 	if err := os.MkdirAll(cfg.Agent.DownloadsDir, 0o755); err != nil {
 		return fmt.Errorf("create downloads directory: %w", err)
 	}
@@ -38,13 +50,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	tunnel, baseURL, err := transport.StartTunnelIfEnabled(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer tunnel.Close()
 	hubClient := client.NewFromConfig(cfg, baseURL)
-
 	backoffs := []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second}
 	attempt := 0
 	for {

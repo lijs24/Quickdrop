@@ -2,19 +2,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"quickdrop/internal/agent"
+	quickapp "quickdrop/internal/app"
 	"quickdrop/internal/client"
 	"quickdrop/internal/config"
 	"quickdrop/internal/hub"
 	"quickdrop/internal/transport"
+	"quickdrop/internal/updater"
 	"quickdrop/internal/webui"
 )
 
@@ -35,12 +40,13 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		printUsage()
-		return nil
+		return runDefaultApp(ctx)
 	}
 	switch args[0] {
 	case "init-dev":
 		return runInitDev(args[1:])
+	case "app":
+		return runApp(ctx, args[1:])
 	case "hub":
 		return runHub(ctx, args[1:])
 	case "agent":
@@ -57,6 +63,8 @@ func run(ctx context.Context, args []string) error {
 		return runGroups(ctx, args[1:])
 	case "version":
 		return runVersion()
+	case "update":
+		return runUpdate(ctx, args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 		return nil
@@ -85,6 +93,70 @@ func runInitDev(args []string) error {
 	}
 	fmt.Println("[QuickDrop] Dev configs and data directories are ready.")
 	return nil
+}
+
+func runDefaultApp(ctx context.Context) error {
+	if err := preferExecutableDirWhenNeeded(); err != nil {
+		return err
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	if err := ensureDevConfig(root); err != nil {
+		return err
+	}
+	configPath := defaultAppConfigPath()
+	hubConfigPath := ""
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	if shouldStartLocalHub(cfg) {
+		candidate := filepath.Join("configs", "dev", "hub.json")
+		if _, err := os.Stat(candidate); err == nil {
+			hubConfigPath = candidate
+		}
+	}
+	args := []string{"-c", configPath}
+	if hubConfigPath != "" {
+		args = append(args, "-hub-config", hubConfigPath)
+	}
+	return runApp(ctx, args)
+}
+
+func runApp(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("app", flag.ExitOnError)
+	configPath := fs.String("c", defaultAppConfigPath(), "agent config file")
+	hubConfigPath := fs.String("hub-config", "", "optional hub config to run in the same app process")
+	listen := fs.String("listen", "", "local GUI listen address")
+	openBrowser := fs.Bool("open", true, "open the GUI URL in the default browser")
+	exitOnClose := fs.Bool("exit-on-close", true, "shut down app services when the GUI page is closed")
+	closeGrace := fs.Duration("close-grace", 12*time.Second, "how long to wait after GUI heartbeat stops before shutting down")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if *listen != "" {
+		cfg.GUI.Listen = *listen
+	}
+	var hubCfg *config.Config
+	if *hubConfigPath != "" {
+		hubCfg, err = config.Load(*hubConfigPath)
+		if err != nil {
+			return err
+		}
+	}
+	return quickapp.Run(ctx, cfg, hubCfg, quickapp.Options{
+		Version:       version,
+		OpenBrowser:   *openBrowser,
+		ExitOnClose:   *exitOnClose,
+		CloseGrace:    *closeGrace,
+		HubConfigPath: *hubConfigPath,
+	})
 }
 
 func runHub(ctx context.Context, args []string) error {
@@ -234,6 +306,48 @@ func runGroups(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runUpdate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	repo := fs.String("repo", "lijs24/Quickdrop", "GitHub repository owner/name")
+	targetVersion := fs.String("version", "latest", "release version or latest")
+	installDir := fs.String("install-dir", "", "installation directory; defaults to the directory containing quickdrop")
+	force := fs.Bool("force", false, "update even when the current version matches the target release")
+	dryRun := fs.Bool("dry-run", false, "check the update without downloading or applying it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	result, err := updater.Run(ctx, updater.Options{
+		Repo:           *repo,
+		Version:        *targetVersion,
+		CurrentVersion: version,
+		InstallDir:     *installDir,
+		Force:          *force,
+		DryRun:         *dryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if result.AlreadyCurrent {
+		if result.CurrentVersion != "" && result.TargetVersion != "" && result.CurrentVersion != result.TargetVersion {
+			fmt.Printf("[QuickDrop] No newer release. Current: %s; latest: %s\n", result.CurrentVersion, result.TargetVersion)
+			return nil
+		}
+		fmt.Printf("[QuickDrop] Already up to date: %s\n", result.TargetVersion)
+		return nil
+	}
+	if *dryRun {
+		fmt.Printf("[QuickDrop] Update available: %s -> %s (%s)\n", result.CurrentVersion, result.TargetVersion, result.AssetName)
+		return nil
+	}
+	if result.ApplyScript != "" {
+		fmt.Printf("[QuickDrop] Downloaded %s and started updater: %s\n", result.AssetName, result.ApplyScript)
+		fmt.Println("[QuickDrop] Close QuickDrop if it is still running; the updater window will apply the new files.")
+		return nil
+	}
+	fmt.Printf("[QuickDrop] Updated %s to %s in %s\n", result.AssetName, result.TargetVersion, result.InstallDir)
+	return nil
+}
+
 func clientFromConfig(ctx context.Context, configPath string) (*config.Config, *client.Client, func(), error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -275,11 +389,69 @@ func parseTarget(ctx context.Context, hubClient *client.Client, raw string) (str
 	return "device", raw, nil
 }
 
+func preferExecutableDirWhenNeeded() error {
+	if _, err := os.Stat("configs"); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat configs: %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exe)
+	if _, err := os.Stat(filepath.Join(exeDir, "configs")); err == nil {
+		if err := os.Chdir(exeDir); err != nil {
+			return fmt.Errorf("change to executable directory %s: %w", exeDir, err)
+		}
+	}
+	return nil
+}
+
+func ensureDevConfig(root string) error {
+	for _, path := range []string{
+		filepath.Join(root, "quickdrop.json"),
+		filepath.Join(root, "configs", "dev", "laptop.json"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+	}
+	return config.WriteDevConfigs(root, false)
+}
+
+func defaultAppConfigPath() string {
+	if _, err := os.Stat("quickdrop.json"); err == nil {
+		return "quickdrop.json"
+	}
+	return filepath.Join("configs", "dev", "laptop.json")
+}
+
+func shouldStartLocalHub(cfg *config.Config) bool {
+	if cfg.HubClient.UseSSHTunnel || cfg.SSHTunnel.Enabled {
+		return false
+	}
+	parsed, err := url.Parse(cfg.HubClient.BaseURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	port := parsed.Port()
+	if port == "" {
+		port = "80"
+	}
+	return (host == "127.0.0.1" || host == "localhost" || host == "::1") && port == "47891"
+}
+
 func printUsage() {
 	fmt.Println(`QuickDrop MVP
 
 Usage:
+  quickdrop
   quickdrop init-dev [--force]
+  quickdrop app -c configs/dev/laptop.json [-hub-config configs/dev/hub.json]
   quickdrop hub -c configs/dev/hub.json
   quickdrop agent -c configs/dev/laptop.json
   quickdrop gui -c configs/dev/laptop.json [-listen 127.0.0.1:47900]
@@ -288,6 +460,7 @@ Usage:
   quickdrop devices -c configs/dev/laptop.json
   quickdrop groups -c configs/dev/laptop.json
   quickdrop version
+  quickdrop update
 
 Targets:
   device:<id> sends to one device.

@@ -12,9 +12,31 @@ This repository is intentionally lightweight: one Go module, SQLite storage, RES
 - `quickdrop send` uploads one file to `device:<id>` or `group:<id>`.
 - `quickdrop devices` and `quickdrop groups` list Hub state.
 - `quickdrop gui` starts a local browser UI that proxies Hub API calls with the configured device token.
+- `quickdrop app` starts the Agent and GUI together in one process, with an optional Hub in the same process.
+- Running `quickdrop` with no arguments starts app mode. In Windows release packages, double-click `QuickDropApp.exe` for the same flow without opening PowerShell first.
+- App mode exposes a close button and page heartbeat so closing the GUI shuts down Agent/GUI/tunnel services instead of leaving QuickDrop in the background.
+- `quickdrop update` checks GitHub Releases, downloads the matching package, verifies `checksums.txt`, and applies the update.
 - The Web GUI includes a Settings panel for editing the current device config without manually editing JSON.
 - `quickdrop init-dev` writes local dev configs and data directories without overwriting existing config files unless `--force` is used.
 - SSH tunnel configuration is present and can start system `ssh -N -L ...` when enabled.
+
+## Integrated App Mode
+
+For day-to-day use, prefer app mode:
+
+```powershell
+.\quickdrop.exe app -c configs\dev\laptop.json
+```
+
+If the same machine should also run the Hub:
+
+```powershell
+.\quickdrop.exe app -c configs\dev\server.json -hub-config configs\dev\hub.json
+```
+
+In a release package, double-click `QuickDropApp.exe` to start app mode with the default config. On first run it creates dev configs when needed, opens the browser GUI, and exits after the GUI page is closed. Keep `quickdrop.exe` for CLI/debug commands.
+
+To make a configured portable install one-click, place a local `quickdrop.json` next to the executable. It is ignored by Git and used before `configs/dev/laptop.json`.
 
 ## Windows PowerShell Demo
 
@@ -135,10 +157,10 @@ QuickDrop does not implement SSH itself and does not rely on the current Codex S
 
 ## Current Limits
 
-- No installer or packaging.
+- No installer.
 - No Windows Service or systemd deployment.
 - No system notifications.
-- No automatic updates.
+- Updates are user-triggered through `quickdrop update` or the app UI; no background auto-update daemon.
 - No end-to-end encryption.
 - No directory transfer.
 - No mobile client.
@@ -171,3 +193,13 @@ Packages are written to `dist/` for Windows, Linux, and macOS, with `checksums.t
 GitHub release automation is included in `.github/workflows/release.yml`. Push a tag such as `v0.1.0` to run tests, build all packages, and publish release assets.
 
 See `PACKAGING.md` for the full distribution flow.
+
+## Updating
+
+From a packaged install:
+
+```powershell
+.\quickdrop.exe update
+```
+
+On Windows, the updater downloads the latest GitHub Release asset for your CPU architecture, verifies `checksums.txt`, then starts a small `.cmd` apply script. Close QuickDrop if it is still running; the updater window copies the new files after the old process exits.
